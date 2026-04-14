@@ -15,6 +15,7 @@ class function:
 
 functions = []
 
+## Appen all functions here
 functions.append(function(spread))
 
 client = RITClient()
@@ -22,6 +23,7 @@ client = RITClient()
 while True:
     security = client.get_security()
 
+    ## Loop throug all functions
     for func in functions:
         if not func.on:
             continue
