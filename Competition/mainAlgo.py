@@ -11,11 +11,11 @@ def spread(securities, ritClient: RITClient) -> bool:
     return False
 
 def tame_spread(securities, ritClient: RITClient) -> bool:
-    security = securities["Tame"]
+    security = securities["TAME"]
 
     diff = (security["ask"] - security["bid"]) * 100
     
-    ritClient.buy_market("CRZY", diff)
+    ritClient.sell_market("TAME", diff)
 
     return False
 
@@ -33,7 +33,7 @@ functions.append(function(tame_spread))
 
 client = RITClient()
 
-TICKS_OFF = 1
+TICKS_OFF = 10
 
 while True:
     securities = client.get_securities()
