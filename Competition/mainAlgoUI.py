@@ -388,13 +388,22 @@ class Dashboard(tk.Tk):
                  bg=self.PANEL, fg=self.SUBTEXT).pack(anchor="w")
 
         pnl_row = tk.Frame(total_frame, bg=self.PANEL)
-        pnl_row.pack(anchor="w", pady=(4, 0))
+        pnl_row.pack(fill="x", pady=(4, 0))
 
-        tk.Label(pnl_row, text="Total (sum of all functions)", font=small_font,
+        # Left: label + number
+        left = tk.Frame(pnl_row, bg=self.PANEL)
+        left.pack(side="left", fill="x", expand=True)
+        tk.Label(left, text="Total (sum of all functions)", font=small_font,
                  bg=self.PANEL, fg=self.SUBTEXT).pack(anchor="w")
-        self.total_lbl = tk.Label(pnl_row, text="$0.00",
+        self.total_lbl = tk.Label(left, text="$0.00",
                                    font=total_font, bg=self.PANEL, fg=self.SUBTEXT)
         self.total_lbl.pack(anchor="w")
+
+        # Right: sparkline for model total
+        self.total_canvas = tk.Canvas(pnl_row, width=200, height=50,
+                                       bg=self.PANEL, highlightthickness=0)
+        self.total_canvas.pack(side="right", padx=(8, 0))
+        self.total_pnl_history: list[float] = []
 
         self._refresh_ui()
 
@@ -476,11 +485,16 @@ class Dashboard(tk.Tk):
         # Model total — just the sum of what each function shows above
         self.total_lbl.configure(text=f"${total_t:+.2f}", fg=self._pnl_color(total_t))
 
+        self.total_pnl_history.append(total_t)
+        self.total_pnl_history = self.total_pnl_history[-150:]
+        self._draw_sparkline(self.total_canvas, self.total_pnl_history,
+                             self._pnl_color(total_t), W=200)
+
         self.after(200, self._refresh_ui)
 
-    def _draw_sparkline(self, canvas, history: list, color: str):
+    def _draw_sparkline(self, canvas, history: list, color: str, W: int = 120):
         canvas.delete("all")
-        W, H, pad = 120, 50, 4
+        H, pad = 50, 4
 
         if len(history) < 2:
             # Not enough data yet — just draw a dashed zero line
