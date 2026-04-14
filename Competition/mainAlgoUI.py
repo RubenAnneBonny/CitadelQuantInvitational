@@ -457,15 +457,15 @@ class Dashboard(tk.Tk):
             if func.disabled:
                 indicator.configure(fg=self.DARK_RED)
                 state_lbl.configure(text="OFF  |  manually disabled")
-                btn.configure(text="Turn ON", bg=self.BTN_ON)
+                btn.configure(text="Turn ON", bg=self.DARK_RED, activebackground=self.DARK_RED, fg=self.TEXT)
             elif func.on:
                 indicator.configure(fg=self.GREEN)
                 state_lbl.configure(text="ON")
-                btn.configure(text="Turn OFF", bg=self.BTN_OFF)
+                btn.configure(text="Turn OFF", bg=self.GREEN, activebackground=self.GREEN, fg=self.BTN_FG)
             else:
                 indicator.configure(fg=self.RED)
                 state_lbl.configure(text=f"COOLDOWN  |  {TICKS_OFF - func.off_ticks} ticks left")
-                btn.configure(text="Turn OFF", bg=self.BTN_OFF)
+                btn.configure(text="Turn OFF", bg=self.RED, activebackground=self.RED, fg=self.BTN_FG)
 
             # PnL
             r = func.tracker.realized
