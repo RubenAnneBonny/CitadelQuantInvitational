@@ -35,7 +35,15 @@ client = RITClient()
 
 TICKS_OFF = 10
 
+pre_tick = -1
+
 while True:
+    tick = client.get_case()["tick"]
+    if pre_tick == tick:
+        continue
+
+    pre_tick = tick
+
     securities = client.get_securities()
     securities = {s["ticker"]: s for s in client.get_securities()}
 
