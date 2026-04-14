@@ -10,6 +10,15 @@ def spread(securities, ritClient: RITClient) -> bool:
 
     return False
 
+def tame_spread(securities, ritClient: RITClient) -> bool:
+    security = securities["Tame"]
+
+    diff = (security["ask"] - security["bid"]) * 100
+    
+    ritClient.buy_market("CRZY", diff)
+
+    return False
+
 class function:
     def __init__(self, func):
         self.func = func
@@ -20,6 +29,7 @@ functions = []
 
 ## Appen all functions here
 functions.append(function(spread))
+functions.append(function(tame_spread))
 
 client = RITClient()
 
