@@ -5,7 +5,7 @@ from typing import Optional
 # Swap API_KEY to your actual key once you receive it from the competition organizers.
 # BASE_URL points to the RIT server. If RIT is running on a different machine on your
 # LAN, replace "localhost" with that machine's IP (e.g. "http://192.168.1.10:9999/v1").
-API_KEY = "YOUR_API_KEY_HERE"
+API_KEY = "IRJW2AFJ"
 BASE_URL = "http://localhost:9999/v1"
 
 

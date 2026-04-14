@@ -22,10 +22,10 @@ from rit_client import RITClient
 
 # ── Settings ───────────────────────────────────────────────────────────────────
 # Change this to any ticker that exists in your current RIT case
-TICKER = "BULL"
+TICKER = "CRZY"
 
 # Test order settings — keep quantity small so it doesn't affect your position much
-TEST_ORDER_TICKER   = "BULL"
+TEST_ORDER_TICKER   = "CRZY"
 TEST_ORDER_QUANTITY = 10
 TEST_ORDER_TYPE     = "LIMIT"   # "MARKET" or "LIMIT"
 TEST_ORDER_SIDE     = "BUY"     # "BUY"   or "SELL"
