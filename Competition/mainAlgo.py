@@ -26,7 +26,7 @@ client = RITClient()
 TICKS_OFF = 1
 
 while True:
-    securities = client.get_security()
+    securities = client.get_securities()
 
     ## Loop throug all functions
     for func in functions:
