@@ -38,4 +38,4 @@ while True:
             else:
                 continue            
 
-        func.on = func.func(security, client)
+        func.on = func.func(securities, client)
