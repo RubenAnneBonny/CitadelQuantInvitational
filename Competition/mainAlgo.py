@@ -4,7 +4,7 @@ from rit_client import RITClient
 def spread(securities, ritClient: RITClient) -> bool:
     security = securities["CRZY"]
 
-    diff = (security["Ask"] - security["Bid"]) * 100
+    diff = (security["ask"] - security["bid"]) * 100
     
     ritClient.buy_market("CRZY", diff)
 
