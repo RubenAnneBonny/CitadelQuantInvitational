@@ -27,6 +27,7 @@ TICKS_OFF = 1
 
 while True:
     securities = client.get_securities()
+    securities = {s["ticker"]: s for s in client.get_securities()}
 
     ## Loop throug all functions
     for func in functions:
