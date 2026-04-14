@@ -17,7 +17,8 @@ class PnLTracker:
         self.realized   = 0.0
         self._positions = {}   # ticker -> {"qty": int, "avg_cost": float}
 
-    def record(self, ticker: str, action: str, quantity: int, price: float):
+    def record(self, ticker: str, action: str, quantity: int, price: float,
+               transaction_cost: float = 0.0):
         """Call this every time the function places an order."""
         if ticker not in self._positions:
             self._positions[ticker] = {"qty": 0, "avg_cost": 0.0}
@@ -56,6 +57,9 @@ class PnLTracker:
                     self.realized += abs(qty) * (pos["avg_cost"] - price)
                 pos["qty"]      = signed_qty + qty
                 pos["avg_cost"] = price
+
+        # Transaction cost is always a drag — subtract it regardless of direction
+        self.realized -= abs(quantity) * transaction_cost
 
     def unrealized(self, current_prices: dict) -> float:
         """
@@ -98,40 +102,52 @@ class TrackedClient:
 
     # ── Intercept order methods ────────────────────────────────────────────────
 
+    def _tc(self, ticker: str) -> float:
+        """Returns the per-share transaction cost for a ticker (0 if unknown)."""
+        return self._securities.get(ticker.upper(), {}).get("transaction_cost", 0.0)
+
+    def _fill_price(self, result: dict, ticker: str, action: str) -> float:
+        """
+        Best-effort fill price. Uses the actual price from the API response if
+        present, otherwise falls back to the current bid/ask from securities.
+        """
+        if result.get("price"):
+            return float(result["price"])
+        sec = self._securities.get(ticker.upper(), {})
+        return sec.get("ask", 0.0) if action == "BUY" else sec.get("bid", 0.0)
+
     def buy_market(self, ticker: str, quantity: int) -> dict:
         result = self._client.buy_market(ticker, quantity)
-        price  = self._securities.get(ticker.upper(), {}).get("ask", 0.0)
-        self._tracker.record(ticker.upper(), "BUY", quantity, price)
+        self._tracker.record(ticker.upper(), "BUY", quantity,
+                             self._fill_price(result, ticker, "BUY"), self._tc(ticker))
         return result
 
     def sell_market(self, ticker: str, quantity: int) -> dict:
         result = self._client.sell_market(ticker, quantity)
-        price  = self._securities.get(ticker.upper(), {}).get("bid", 0.0)
-        self._tracker.record(ticker.upper(), "SELL", quantity, price)
+        self._tracker.record(ticker.upper(), "SELL", quantity,
+                             self._fill_price(result, ticker, "SELL"), self._tc(ticker))
         return result
 
     def buy_limit(self, ticker: str, quantity: int, price: float) -> dict:
         result = self._client.buy_limit(ticker, quantity, price)
-        self._tracker.record(ticker.upper(), "BUY", quantity, price)
+        self._tracker.record(ticker.upper(), "BUY", quantity, price, self._tc(ticker))
         return result
 
     def sell_limit(self, ticker: str, quantity: int, price: float) -> dict:
         result = self._client.sell_limit(ticker, quantity, price)
-        self._tracker.record(ticker.upper(), "SELL", quantity, price)
+        self._tracker.record(ticker.upper(), "SELL", quantity, price, self._tc(ticker))
         return result
 
     def place_market_order(self, ticker: str, action: str, quantity: int) -> dict:
         result = self._client.place_market_order(ticker, action, quantity)
         action = action.upper()
-        price  = (self._securities.get(ticker.upper(), {}).get("ask", 0.0)
-                  if action == "BUY"
-                  else self._securities.get(ticker.upper(), {}).get("bid", 0.0))
-        self._tracker.record(ticker.upper(), action, quantity, price)
+        self._tracker.record(ticker.upper(), action, quantity,
+                             self._fill_price(result, ticker, action), self._tc(ticker))
         return result
 
     def place_limit_order(self, ticker: str, action: str, quantity: int, price: float) -> dict:
         result = self._client.place_limit_order(ticker, action, quantity, price)
-        self._tracker.record(ticker.upper(), action.upper(), quantity, price)
+        self._tracker.record(ticker.upper(), action.upper(), quantity, price, self._tc(ticker))
         return result
 
     # ── Proxy everything else to the base client ───────────────────────────────
