@@ -54,6 +54,7 @@ while True:
 
             if func.off_ticks >= TICKS_OFF:
                 func.on = True
+                func.off_ticks = 0
             else:
                 continue            
 
