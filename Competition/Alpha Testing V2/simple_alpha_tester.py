@@ -86,6 +86,25 @@ def _calculate_metrics(bt, alpha_name, initial_capital):
     sharpe = (strat_ret.mean() * 252) / (strat_ret.std() * np.sqrt(252)) if strat_ret.std() > 0 else 0
     bh_sharpe = (bh_ret.mean() * 252) / (bh_ret.std() * np.sqrt(252)) if bh_ret.std() > 0 else 0
     
+    # Sortino Ratio (uses only downside volatility)
+    # Downside deviation: standard deviation of negative returns only
+    negative_returns = strat_ret[strat_ret < 0]
+    downside_deviation = negative_returns.std() * np.sqrt(252) if len(negative_returns) > 0 else 0.0001
+    
+    if downside_deviation > 0:
+        sortino = (strat_ret.mean() * 252) / downside_deviation
+    else:
+        sortino = 0
+    
+    # Sortino for Buy & Hold
+    bh_negative_returns = bh_ret[bh_ret < 0]
+    bh_downside_deviation = bh_negative_returns.std() * np.sqrt(252) if len(bh_negative_returns) > 0 else 0.0001
+    
+    if bh_downside_deviation > 0:
+        bh_sortino = (bh_ret.mean() * 252) / bh_downside_deviation
+    else:
+        bh_sortino = 0
+
     # Max Drawdown
     cummax = bt['Portfolio_Value'].cummax()
     drawdown = (bt['Portfolio_Value'] - cummax) / cummax
@@ -107,6 +126,8 @@ def _calculate_metrics(bt, alpha_name, initial_capital):
         'Annual_Volatility_%': annual_vol,
         'Sharpe_Ratio': sharpe,
         'BH_Sharpe': bh_sharpe,
+        'Sortino_Ratio': sortino,         
+        'BH_Sortino': bh_sortino,            
         'Max_Drawdown_%': max_dd,
         'Win_Rate_%': win_rate,
         'Num_Trades': num_trades,
