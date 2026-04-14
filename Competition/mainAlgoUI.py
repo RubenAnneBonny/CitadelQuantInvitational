@@ -70,8 +70,9 @@ def algo_loop():
 
         for func in functions:
             if not func.on:
-                if not func.no_ticks:
-                    func.off_ticks += 1
+                if func.no_ticks:
+                    continue  # manually disabled — never auto-restart
+                func.off_ticks += 1
                 if func.off_ticks >= TICKS_OFF:
                     func.on        = True
                     func.off_ticks = 0
@@ -90,7 +91,8 @@ class Dashboard(tk.Tk):
     BG          = "#1e1e2e"
     PANEL       = "#2a2a3d"
     GREEN       = "#3ddc84"
-    RED         = "#ff5c5c"
+    RED         = "#ff5c5c"   # auto-off (counting down to restart)
+    DARK_RED    = "#8b1a1a"   # manually disabled (stays off until you re-enable)
     AMBER       = "#ffc44d"
     TEXT        = "#e0e0e0"
     SUBTEXT     = "#888888"
@@ -207,15 +209,15 @@ class Dashboard(tk.Tk):
             t.start()
 
     def _toggle_function(self, func: Function):
-        if func.on or not func.no_ticks:
-            # Turn OFF manually → set no_ticks so it won't auto-restart
-            func.on       = False
-            func.no_ticks = True
+        if func.on:
+            # Turn OFF manually → no_ticks prevents auto-restart
+            func.on        = False
+            func.no_ticks  = True
             func.off_ticks = 0
         else:
             # Turn ON manually
-            func.on       = True
-            func.no_ticks = False
+            func.on        = True
+            func.no_ticks  = False
             func.off_ticks = 0
 
     # ── UI refresh (polls every 200 ms) ────────────────────────────────────────
@@ -239,10 +241,15 @@ class Dashboard(tk.Tk):
                 indicator.configure(fg=self.GREEN)
                 sub_lbl.configure(text=f"ON  |  off_ticks: {func.off_ticks}")
                 btn.configure(text="Turn OFF", bg=self.BTN_OFF)
+            elif func.no_ticks:
+                # Manually disabled — dark red, stays off until re-enabled
+                indicator.configure(fg=self.DARK_RED)
+                sub_lbl.configure(text="OFF  |  manually disabled")
+                btn.configure(text="Turn ON", bg=self.BTN_ON)
             else:
+                # Auto-off — counting down to restart
                 indicator.configure(fg=self.RED)
-                mode = "manual (no auto-restart)" if func.no_ticks else f"auto-restart in {TICKS_OFF - func.off_ticks} ticks"
-                sub_lbl.configure(text=f"OFF  |  {mode}")
+                sub_lbl.configure(text=f"OFF  |  auto-restart in {TICKS_OFF - func.off_ticks} ticks")
                 btn.configure(text="Turn ON", bg=self.BTN_ON)
 
         self.after(200, self._refresh_ui)
