@@ -280,7 +280,7 @@ class AlphaTester:
         
         # Strategy return: multiply daily return by signal (holding signal)
         # This is crucial: you hold the signal until it changes
-        backtest_df['Position'] = signals.fillna(method='ffill').fillna(0)
+        backtest_df['Position'] = signals.ffill().fillna(0)
         
         # Transaction costs when position changes
         backtest_df['Position_Change'] = backtest_df['Position'].diff().abs()
