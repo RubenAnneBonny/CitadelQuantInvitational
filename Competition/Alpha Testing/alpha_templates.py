@@ -7,6 +7,39 @@ import pandas as pd
 import numpy as np
 from alpha_testing_framework import AlphaFactor, AlphaTester
 
+def generate_alpha(df):
+    df = df.copy()
+
+    # Moving averages
+    df['MA_10'] = df['Close'].rolling(10).mean()
+    df['MA_30'] = df['Close'].rolling(30).mean()
+
+    # RSI Calculation
+    delta = df['Close'].diff()
+
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+
+    # Alpha Signal
+    df['Signal'] = 0
+
+    df.loc[
+        (df['MA_10'] > df['MA_30']) &
+        (df['RSI'] < 70),
+        'Signal'
+    ] = 1
+
+    df.loc[
+        (df['MA_10'] < df['MA_30']) &
+        (df['RSI'] > 30),
+        'Signal'
+    ] = -1
+
+    return df['Signal']
+
 # ============================================================================
 # TEMPLATE 1: SIMPLE INDICATOR ALPHA
 # ============================================================================
@@ -336,14 +369,15 @@ if __name__ == "__main__":
     df = pd.read_csv('stock_data.csv', index_col='Date', parse_dates=True)
     
     # 2. Create your alpha instances
-    alpha1 = SimpleIndicatorAlpha(param1=20, param2=50)
+    #alpha1 = SimpleIndicatorAlpha(param1=20, param2=50)
+    alpha1 = generate_alpha(df)
     alpha2 = MultiFactorAlpha()
     alpha3 = MeanReversionTemplateAlpha(zscore_threshold=2.0)
     alpha4 = TrendFollowingAlpha(fast_window=10, slow_window=30)
     alpha5 = VolatilityAlpha()
     
     # 3. Create tester
-    tester = AlphaTester(df, initial_capital=100000, transaction_cost=0.001)
+    tester = AlphaTester(df, initial_capital=1000000, transaction_cost=0.001)
     
     # 4. Test all alphas
     alphas_to_test = [alpha1, alpha2, alpha3, alpha4, alpha5]
