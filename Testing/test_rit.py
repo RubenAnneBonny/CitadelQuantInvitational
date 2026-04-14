@@ -25,10 +25,6 @@ TICKER = "CRZY"
 # Test order — keep quantity small
 TEST_ORDER_TICKER   = "CRZY"
 TEST_ORDER_QUANTITY = 10
-TEST_ORDER_TYPE     = "LIMIT"   # "MARKET" or "LIMIT"
-TEST_ORDER_SIDE     = "BUY"     # "BUY"   or "SELL"
-# Offset from best ask/bid so the limit order sits passively and doesn't fill
-TEST_LIMIT_OFFSET   = -0.10     # -0.10 means bid $0.10 below best ask
 
 # How many recent ticks to show on the plot
 HISTORY_TICKS = 50
@@ -190,44 +186,14 @@ print("STEP 6 — Placing a Test Order")
 print("=" * 55)
 
 try:
-    if TEST_ORDER_TYPE == "MARKET":
-        print(f"  Placing MARKET {TEST_ORDER_SIDE} {TEST_ORDER_QUANTITY} x {TEST_ORDER_TICKER}...")
-        result = client.place_market_order(TEST_ORDER_TICKER, TEST_ORDER_SIDE, TEST_ORDER_QUANTITY)
-        print(f"  Raw response: {result}")
-
-    else:
-        ask = client.best_ask(TEST_ORDER_TICKER)
-        bid = client.best_bid(TEST_ORDER_TICKER)
-        ref = ask if TEST_ORDER_SIDE == "BUY" else bid
-        if ref is None:
-            ref = client.get_security(TEST_ORDER_TICKER).get("last", 10.0)
-        limit_price = round(ref + TEST_LIMIT_OFFSET, 2)
-
-        print(f"  Placing LIMIT {TEST_ORDER_SIDE} {TEST_ORDER_QUANTITY} x {TEST_ORDER_TICKER}"
-              f" @ ${limit_price:.2f}  (ref: ${ref:.2f}, offset: {TEST_LIMIT_OFFSET:+.2f})")
-        result = client.place_limit_order(
-            TEST_ORDER_TICKER, TEST_ORDER_SIDE, TEST_ORDER_QUANTITY, limit_price
-        )
-        print(f"  Raw response: {result}")
+    print(f"  Placing MARKET BUY {TEST_ORDER_QUANTITY} x {TEST_ORDER_TICKER}...")
+    result = client.buy_market(TEST_ORDER_TICKER, TEST_ORDER_QUANTITY)
+    print(f"  Raw response: {result}")
 
     order_id = result.get("order_id")
     print(f"  Order ID = {order_id}")
-
-    # Wait so you can see the order sitting in RIT before we cancel it
     print()
-    print("  >>> Check RIT now — you should see the order in the blotter. <<<")
-    input("  Press ENTER when ready to cancel the test order and finish...")
-
-    if order_id is not None:
-        order = client.get_order(order_id)
-        print(f"  Current status: {order.get('status')} "
-              f"(filled {order.get('quantity_filled', 0)} / {order.get('quantity')})")
-
-        if order.get("status") == "OPEN":
-            cancel = client.cancel_order(order_id)
-            print(f"  Cancelled: {cancel}")
-        else:
-            print(f"  Order already {order.get('status')} — nothing to cancel.")
+    print("  >>> Check RIT — the order should be filled in the blotter. <<<")
 
 except Exception as e:
     print(f"  ERROR: {e}")
