@@ -384,26 +384,11 @@ class Dashboard(tk.Tk):
         pnl_row = tk.Frame(total_frame, bg=self.PANEL)
         pnl_row.pack(anchor="w", pady=(4, 0))
 
-        # Realized
-        tk.Label(pnl_row, text="Realized", font=small_font,
-                 bg=self.PANEL, fg=self.SUBTEXT).grid(row=0, column=0, sticky="w", padx=(0, 16))
-        self.total_r_lbl = tk.Label(pnl_row, text="$0.00",
-                                     font=total_font, bg=self.PANEL, fg=self.SUBTEXT)
-        self.total_r_lbl.grid(row=1, column=0, sticky="w", padx=(0, 16))
-
-        # Unrealized
-        tk.Label(pnl_row, text="Unrealized", font=small_font,
-                 bg=self.PANEL, fg=self.SUBTEXT).grid(row=0, column=1, sticky="w", padx=(0, 16))
-        self.total_u_lbl = tk.Label(pnl_row, text="$0.00",
-                                     font=total_font, bg=self.PANEL, fg=self.SUBTEXT)
-        self.total_u_lbl.grid(row=1, column=1, sticky="w", padx=(0, 16))
-
-        # Total
-        tk.Label(pnl_row, text="Total", font=small_font,
-                 bg=self.PANEL, fg=self.SUBTEXT).grid(row=0, column=2, sticky="w")
+        tk.Label(pnl_row, text="Total (sum of all functions)", font=small_font,
+                 bg=self.PANEL, fg=self.SUBTEXT).pack(anchor="w")
         self.total_lbl = tk.Label(pnl_row, text="$0.00",
                                    font=total_font, bg=self.PANEL, fg=self.SUBTEXT)
-        self.total_lbl.grid(row=1, column=2, sticky="w")
+        self.total_lbl.pack(anchor="w")
 
         self._refresh_ui()
 
@@ -447,10 +432,9 @@ class Dashboard(tk.Tk):
                         self.AMBER if status_text.startswith("Error") else self.RED)
         self.status_label.configure(text=status_text, fg=status_color)
 
-        securities = state["securities"]   # full dict passed to unrealized()
+        securities = state["securities"]
 
-        total_r = 0.0
-        total_u = 0.0
+        total_t = 0.0
 
         for (indicator, state_lbl, pnl_lbl, btn, func) in self.card_widgets:
             # On/off indicator
@@ -467,24 +451,19 @@ class Dashboard(tk.Tk):
                 state_lbl.configure(text=f"COOLDOWN  |  {TICKS_OFF - func.off_ticks} ticks left")
                 btn.configure(text="Turn OFF", bg=self.RED, activebackground=self.RED, fg=self.BTN_FG)
 
-            # PnL
+            # Per-function PnL
             r = func.tracker.realized
             u = func.tracker.unrealized(securities)
             t = r + u
-
-            total_r += r
-            total_u += u
+            total_t += t   # model total = direct sum of each function's total
 
             pnl_lbl.configure(
                 text=f"R: ${r:+.2f}   U: ${u:+.2f}   Total: ${t:+.2f}",
                 fg=self._pnl_color(t)
             )
 
-        # Model totals
-        total_t = total_r + total_u
-        self.total_r_lbl.configure(text=f"${total_r:+.2f}", fg=self._pnl_color(total_r))
-        self.total_u_lbl.configure(text=f"${total_u:+.2f}", fg=self._pnl_color(total_u))
-        self.total_lbl.configure(text=f"${total_t:+.2f}",   fg=self._pnl_color(total_t))
+        # Model total — just the sum of what each function shows above
+        self.total_lbl.configure(text=f"${total_t:+.2f}", fg=self._pnl_color(total_t))
 
         self.after(200, self._refresh_ui)
 
