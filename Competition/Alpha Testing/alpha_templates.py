@@ -337,21 +337,21 @@ if __name__ == "__main__":
     
     # 2. Create your alpha instances
     alpha1 = SimpleIndicatorAlpha(param1=20, param2=50)
-    #alpha2 = MultiFactorAlpha()
-    #alpha3 = MeanReversionTemplateAlpha(zscore_threshold=2.0)
-    #alpha4 = TrendFollowingAlpha(fast_window=10, slow_window=30)
-    #alpha5 = VolatilityAlpha()
+    alpha2 = MultiFactorAlpha()
+    alpha3 = MeanReversionTemplateAlpha(zscore_threshold=2.0)
+    alpha4 = TrendFollowingAlpha(fast_window=10, slow_window=30)
+    alpha5 = VolatilityAlpha()
     
     # 3. Create tester
     tester = AlphaTester(df, initial_capital=100000, transaction_cost=0.001)
     
     # 4. Test all alphas
-    #alphas_to_test = [alpha1, alpha2, alpha3, alpha4, alpha5]
-    alphas_to_test = [alpha1]
+    alphas_to_test = [alpha1, alpha2, alpha3, alpha4, alpha5]
+    #alphas_to_test = [alpha1]
     comparison = tester.compare_alphas(alphas_to_test)
     
     # 5. Export results
-    comparison.to_csv('/mnt/user-data/outputs/template_comparison.csv')
+    comparison.to_csv('template_comparison.csv')
     
     print("\nResults saved!")
     print(comparison[['Alpha_Name', 'Excess_Return_%', 'Sharpe_Ratio', 'Max_Drawdown_%']])
