@@ -148,6 +148,7 @@ def print_results(metrics):
     print(f"{'Excess Return':<35} {metrics['Excess_Return_%']:>14.2f}% {'-':>15}")
     print(f"{'Annual Volatility':<35} {metrics['Annual_Volatility_%']:>14.2f}% {'-':>15}")
     print(f"{'Sharpe Ratio':<35} {metrics['Sharpe_Ratio']:>14.2f} {metrics['BH_Sharpe']:>14.2f}")
+    print(f"{'Sortino Ratio':<35} {metrics['Sortino_Ratio']:>14.2f} {metrics['BH_Sortino']:>14.2f}")
     print(f"{'Max Drawdown':<35} {metrics['Max_Drawdown_%']:>14.2f}% {'-':>15}")
     print(f"{'Win Rate':<35} {metrics['Win_Rate_%']:>14.2f}% {'-':>15}")
     print(f"{'Number of Trades':<35} {metrics['Num_Trades']:>14.0f} {'-':>15}")
@@ -418,5 +419,7 @@ if __name__ == "__main__":
     comparison = compare_alphas(df, alphas_to_test)
     
     # Save comparison
-    comparison.to_csv('/mnt/user-data/outputs/alpha_comparison.csv', index=False)
+    # Just save in your current folder
+    comparison.to_csv('alpha_comparison.csv', index=False)
+    
     print("\n✓ Comparison saved to: alpha_comparison.csv")
