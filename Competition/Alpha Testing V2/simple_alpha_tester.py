@@ -25,8 +25,8 @@ def backtest_alpha(df, signals, alpha_name="Alpha", initial_capital=100000, tran
     
     Args:
         df: DataFrame with OHLCV data (must have 'Close' column)
-        signals: pandas Series with same index as df, values in [-1, 0, 1]
-                 1 = long, -1 = short, 0 = no position
+        signals: pandas Series with same index as df, values in [-1,1]
+                 1 = long, -1 = short, and by how much
         alpha_name: name of your alpha (for printing)
         initial_capital: starting portfolio value
         transaction_cost: % cost per trade (e.g., 0.001 = 0.1%)
@@ -36,15 +36,15 @@ def backtest_alpha(df, signals, alpha_name="Alpha", initial_capital=100000, tran
     """
     
     bt = df.copy()
-    bt['Signal'] = signals
-    bt['Daily_Return'] = bt['Close'].pct_change()
+    bt['Signal'] = signals #Adds singal column
+    bt['Daily_Return'] = bt['Close'].pct_change()#caluclate close percent change
     
     # Hold position until signal changes (fixed for pandas 3.0+)
-    bt['Position'] = bt['Signal'].ffill().fillna(0)
+    bt['Position'] = bt['Signal'].ffill().fillna(0)#forward fills
     
     # Transaction cost when position changes
-    bt['Position_Change'] = bt['Position'].diff().abs()
-    bt['Trans_Cost'] = bt['Position_Change'] * transaction_cost
+    bt['Position_Change'] = bt['Position'].diff().abs()#calculate the position change, how much we hold has changed
+    bt['Trans_Cost'] = bt['Position_Change'] * transaction_cost#the absolute difference is our transaction cost
     
     # Strategy return = signal * daily_return - transaction costs
     bt['Strat_Return'] = bt['Position'].shift(1) * bt['Daily_Return'] - bt['Trans_Cost']
