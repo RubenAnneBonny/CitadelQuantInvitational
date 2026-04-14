@@ -161,13 +161,13 @@ class TrackedClient:
 
 def spread(securities, ritClient) -> bool:
     security = securities["CRZY"]
-    diff = (security["ask"] - security["bid"]) * 100
+    diff = (security["ask"] - security["bid"]) * 200
     ritClient.buy_market("CRZY", diff)
     return False
 
 def tame_spread(securities, ritClient) -> bool:
     security = securities["TAME"]
-    diff = (security["ask"] - security["bid"]) * 100
+    diff = (security["ask"] - security["bid"]) * 200
     ritClient.sell_market("TAME", diff)
     return False
 
@@ -207,8 +207,8 @@ class Function:
 client = RITClient()
 
 functions = [
-    Function(spread,      stop_value=2.0),
-    Function(tame_spread, stop_value=2.0),
+    Function(spread,      stop_value=10.0),
+    Function(tame_spread, stop_value=10.0),
 ]
 
 # Wire up each function's tracked client now that `client` exists
