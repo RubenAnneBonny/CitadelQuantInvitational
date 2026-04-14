@@ -103,8 +103,8 @@ class TrackedClient:
     # ── Intercept order methods ────────────────────────────────────────────────
 
     def _tc(self, ticker: str) -> float:
-        """Returns the per-share transaction cost for a ticker (0 if unknown)."""
-        return self._securities.get(ticker.upper(), {}).get("transaction_cost", 0.0)
+        """Returns the per-share trading fee for a ticker (0 if unknown)."""
+        return self._securities.get(ticker.upper(), {}).get("trading_fee", 0.0)
 
     def _fill_price(self, result: dict, ticker: str, action: str) -> float:
         """
@@ -209,8 +209,6 @@ state = {
 
 def algo_loop():
     pre_tick = -1
-
-    client.get_security("CRZY")
 
     while state["running"]:
         try:
