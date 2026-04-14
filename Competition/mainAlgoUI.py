@@ -285,10 +285,14 @@ def _update_stop_orders(func: "Function", securities: dict):
             continue
 
         try:
+            # Use the raw client — stop orders are resting and haven't filled yet.
+            # Routing through TrackedClient would record a phantom trade immediately,
+            # corrupting the PnL tracker and triggering false stops.
+            raw = func.tracked_client._client
             if qty > 0:
-                result = func.tracked_client.sell_limit(ticker, abs(qty), stop_p)
+                result = raw.sell_limit(ticker, abs(qty), stop_p)
             else:
-                result = func.tracked_client.buy_limit(ticker, abs(qty), stop_p)
+                result = raw.buy_limit(ticker, abs(qty), stop_p)
             func.stop_order_ids[ticker] = result.get("order_id")
         except Exception:
             pass
@@ -604,9 +608,11 @@ class Dashboard(tk.Tk):
                 indicator.configure(fg=self.GREEN)
                 if func.stop_value > 0:
                     t_now = func.tracker.realized + func.tracker.unrealized(securities)
-                    dist  = func.peak_pnl - t_now - func.stop_value
+                    # Room left = how far current PnL is above the stop trigger level
+                    # Stop triggers when t <= peak - stop_value, so room = t - (peak - stop_value)
+                    room = t_now - (func.peak_pnl - func.stop_value)
                     state_lbl.configure(
-                        text=f"ON  |  stop: ${func.stop_value:.2f}  dist: ${dist:+.2f}"
+                        text=f"ON  |  stop: ${func.stop_value:.2f}  room: ${room:+.2f}"
                     )
                 else:
                     state_lbl.configure(text="ON")
