@@ -24,6 +24,7 @@ class function:
         self.func = func
         self.on = True
         self.off_ticks = 0
+        self.no_ticks = False
 
 functions = []
 
@@ -50,7 +51,8 @@ while True:
     ## Loop throug all functions
     for func in functions:
         if not func.on:
-            func.off_ticks += 1
+            if not func.no_ticks:
+                func.off_ticks += 1
 
             if func.off_ticks >= TICKS_OFF:
                 func.on = True
