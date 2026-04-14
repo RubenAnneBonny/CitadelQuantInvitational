@@ -33,7 +33,7 @@ functions.append(function(tame_spread))
 
 client = RITClient()
 
-TICKS_OFF = 10
+TICKS_OFF = 5
 
 pre_tick = -1
 
