@@ -61,24 +61,25 @@ class PnLTracker:
         # Transaction cost is always a drag — subtract it regardless of direction
         self.realized -= abs(quantity) * transaction_cost
 
-    def unrealized(self, current_prices: dict) -> float:
+    def unrealized(self, securities: dict) -> float:
         """
-        Unrealized PnL given a dict of {ticker: current_price}.
-        Uses the security's last price if available.
+        Unrealized PnL using the securities dict from RIT.
+
+        Matches RIT's own mark-to-market convention:
+          - Long positions are marked to bid (what you'd receive if you sold now)
+          - Short positions are marked to ask (what you'd pay to cover now)
         """
         total = 0.0
         for ticker, pos in self._positions.items():
-            if pos["qty"] == 0 or ticker not in current_prices:
+            if pos["qty"] == 0 or ticker not in securities:
                 continue
-            current = current_prices[ticker]
-            if pos["qty"] > 0:
-                total += pos["qty"]  * (current - pos["avg_cost"])
-            else:
-                total += -pos["qty"] * (pos["avg_cost"] - current)
+            sec     = securities[ticker]
+            current = sec.get("bid" if pos["qty"] > 0 else "ask", sec.get("last", 0.0))
+            total  += pos["qty"] * (current - pos["avg_cost"])
         return total
 
-    def total(self, current_prices: dict) -> float:
-        return self.realized + self.unrealized(current_prices)
+    def total(self, securities: dict) -> float:
+        return self.realized + self.unrealized(securities)
 
 
 # ── Tracked client wrapper ─────────────────────────────────────────────────────
@@ -446,8 +447,7 @@ class Dashboard(tk.Tk):
                         self.AMBER if status_text.startswith("Error") else self.RED)
         self.status_label.configure(text=status_text, fg=status_color)
 
-        # Current prices for unrealized PnL
-        current_prices = {t: s.get("last", 0.0) for t, s in state["securities"].items()}
+        securities = state["securities"]   # full dict passed to unrealized()
 
         total_r = 0.0
         total_u = 0.0
@@ -455,24 +455,21 @@ class Dashboard(tk.Tk):
         for (indicator, state_lbl, pnl_lbl, btn, func) in self.card_widgets:
             # On/off indicator
             if func.disabled:
-                # User manually killed — dark red, stays off until re-enabled
                 indicator.configure(fg=self.DARK_RED)
                 state_lbl.configure(text="OFF  |  manually disabled")
                 btn.configure(text="Turn ON", bg=self.BTN_ON)
             elif func.on:
-                # Active — running this tick
                 indicator.configure(fg=self.GREEN)
                 state_lbl.configure(text="ON")
                 btn.configure(text="Turn OFF", bg=self.BTN_OFF)
             else:
-                # Auto cooldown — counting down to next run
                 indicator.configure(fg=self.RED)
                 state_lbl.configure(text=f"COOLDOWN  |  {TICKS_OFF - func.off_ticks} ticks left")
                 btn.configure(text="Turn OFF", bg=self.BTN_OFF)
 
             # PnL
             r = func.tracker.realized
-            u = func.tracker.unrealized(current_prices)
+            u = func.tracker.unrealized(securities)
             t = r + u
 
             total_r += r
