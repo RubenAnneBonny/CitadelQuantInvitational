@@ -174,24 +174,41 @@ def tame_spread(securities, ritClient) -> bool:
 # ── Function wrapper ───────────────────────────────────────────────────────────
 
 class Function:
-    def __init__(self, func):
-        self.func           = func
-        self.name           = func.__name__
-        self.on             = True   # auto-cycle state: True=run this tick, False=cooldown
-        self.off_ticks      = 0      # how many ticks spent in cooldown
-        self.no_ticks       = False  # kept for compatibility
-        self.disabled       = False  # user kill-switch: True=never run until re-enabled
-        self.pnl_history    = []     # rolling PnL history for the sparkline (max 150 pts)
-        self.tracker        = PnLTracker()
-        self.tracked_client = None   # set after client is created below
+    def __init__(self, func, stop_value: float = 0.0):
+        self.func            = func
+        self.name            = func.__name__
+        self.on              = True   # auto-cycle state: True=run this tick, False=cooldown
+        self.off_ticks       = 0      # how many ticks spent in cooldown
+        self.no_ticks        = False  # kept for compatibility
+        self.disabled        = False  # user kill-switch: True=never run until re-enabled
+        self.pnl_history     = []     # rolling PnL history for the sparkline (max 150 pts)
+        self.tracker         = PnLTracker()
+        self.tracked_client  = None   # set after client is created below
+        # ── Drawdown stop-loss ─────────────────────────────────────────────────
+        self.stop_value      = stop_value  # max drawdown from peak allowed (0 = disabled)
+        self.peak_pnl        = 0.0         # high-watermark PnL since last reset
+        self.stop_order_ids  = {}          # ticker -> order_id of resting stop-limit order
+        self.stopped_by_risk = False       # True = auto-stopped by drawdown rule
+
+    def suggested_stop_value(self, k: float = 2.0) -> float:
+        """Returns k * std-dev of historical drawdowns — call after a warm-up period."""
+        import statistics
+        if len(self.pnl_history) < 10:
+            return 0.0
+        peak = self.pnl_history[0]
+        drawdowns = []
+        for p in self.pnl_history:
+            peak = max(peak, p)
+            drawdowns.append(peak - p)
+        return round(k * statistics.stdev(drawdowns), 2)
 
 # ── Client + function registry ─────────────────────────────────────────────────
 
 client = RITClient()
 
 functions = [
-    Function(spread),
-    Function(tame_spread),
+    Function(spread,      stop_value=2.0),
+    Function(tame_spread, stop_value=2.0),
 ]
 
 # Wire up each function's tracked client now that `client` exists
@@ -208,6 +225,108 @@ state = {
     "status":     "Stopped",
     "securities": {},   # latest {ticker: security_dict}, used for unrealized PnL
 }
+
+def _stop_price(pos: dict, peak_pnl: float, stop_value: float, realized: float) -> float:
+    """
+    Price at which this position's PnL contribution hits the stop threshold.
+
+    Works for both longs (qty > 0 → sell stop) and shorts (qty < 0 → buy stop).
+    The formula solves for `price` such that:
+        realized + qty * (price - avg_cost) == peak_pnl - stop_value
+    """
+    qty = pos["qty"]
+    return pos["avg_cost"] + (peak_pnl - stop_value - realized) / qty
+
+
+def _update_stop_orders(func: "Function", securities: dict):
+    """
+    Place (or cancel-and-replace) one resting limit stop order per open ticker.
+
+    Called every tick when the function is healthy and stop_value > 0.
+    Each order is sized to close the full position for that ticker.
+    """
+    if func.stop_value == 0 or not func.tracker._positions:
+        return
+
+    realized = func.tracker.realized
+
+    for ticker, pos in func.tracker._positions.items():
+        qty = pos["qty"]
+        if qty == 0:
+            continue
+
+        # Cancel old stop order for this ticker (silently ignore if already gone)
+        if ticker in func.stop_order_ids:
+            try:
+                func.tracked_client.cancel_order(func.stop_order_ids[ticker])
+            except Exception:
+                pass
+            del func.stop_order_ids[ticker]
+
+        # Compute unrealized of all OTHER tickers so stop_price is accurate
+        other_unrealized = sum(
+            pos2["qty"] * (
+                securities.get(t2, {}).get("bid" if pos2["qty"] > 0 else "ask",
+                                           securities.get(t2, {}).get("last", 0.0))
+                - pos2["avg_cost"]
+            )
+            for t2, pos2 in func.tracker._positions.items()
+            if t2 != ticker and pos2["qty"] != 0 and t2 in securities
+        )
+
+        stop_p = _stop_price(
+            pos,
+            func.peak_pnl,
+            func.stop_value,
+            realized + other_unrealized,
+        )
+
+        if stop_p <= 0:
+            continue
+
+        try:
+            if qty > 0:
+                result = func.tracked_client.sell_limit(ticker, abs(qty), stop_p)
+            else:
+                result = func.tracked_client.buy_limit(ticker, abs(qty), stop_p)
+            func.stop_order_ids[ticker] = result.get("order_id")
+        except Exception:
+            pass
+
+
+def _trigger_stop(func: "Function", securities: dict, current_pnl: float):
+    """
+    Fire aggressive limit orders to close all positions, then disable the function.
+
+    Called when the drawdown from the peak exceeds stop_value.
+    """
+    # Cancel all resting stop orders
+    for ticker, oid in list(func.stop_order_ids.items()):
+        try:
+            func.tracked_client.cancel_order(oid)
+        except Exception:
+            pass
+    func.stop_order_ids.clear()
+
+    # Close every open position with an aggressive limit at the current best price
+    for ticker, pos in func.tracker._positions.items():
+        qty = pos["qty"]
+        if qty == 0 or ticker not in securities:
+            continue
+        try:
+            if qty > 0:
+                close_price = securities[ticker].get("bid", 0.0)
+                func.tracked_client.sell_limit(ticker, abs(qty), close_price)
+            else:
+                close_price = securities[ticker].get("ask", 0.0)
+                func.tracked_client.buy_limit(ticker, abs(qty), close_price)
+        except Exception:
+            pass
+
+    func.stopped_by_risk = True
+    func.disabled        = True
+    func.peak_pnl        = current_pnl   # reset so re-enable starts fresh
+
 
 def algo_loop():
     pre_tick = -1
@@ -254,6 +373,15 @@ def algo_loop():
             except Exception as e:
                 state["status"] = f"Error in {func.name}: {e}"
 
+            # ── Drawdown stop-loss check ───────────────────────────────────────
+            if func.stop_value > 0 and not func.stopped_by_risk:
+                t = func.tracker.realized + func.tracker.unrealized(securities)
+                func.peak_pnl = max(func.peak_pnl, t)
+                if t <= func.peak_pnl - func.stop_value:
+                    _trigger_stop(func, securities, t)
+                else:
+                    _update_stop_orders(func, securities)
+
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
 class Dashboard(tk.Tk):
@@ -262,6 +390,7 @@ class Dashboard(tk.Tk):
     GREEN    = "#3ddc84"
     RED      = "#ff5c5c"
     DARK_RED = "#8b1a1a"
+    PINK     = "#e91e8c"   # risk-stop state
     AMBER    = "#ffc44d"
     TEXT     = "#e0e0e0"
     SUBTEXT  = "#888888"
@@ -419,13 +548,21 @@ class Dashboard(tk.Tk):
 
     def _toggle_function(self, func: Function):
         if func.disabled:
-            # Re-enable: reset auto-cycle so it runs immediately next tick
-            func.disabled  = False
-            func.on        = True
-            func.off_ticks = 0
+            # Re-enable: reset auto-cycle and clear any risk-stop state
+            func.disabled        = False
+            func.stopped_by_risk = False
+            func.stop_order_ids  = {}
+            func.on              = True
+            func.off_ticks       = 0
         else:
-            # Disable: kill it regardless of whether it's running or in cooldown
-            func.disabled  = True
+            # Disable: kill it and cancel any resting stop orders
+            func.disabled = True
+            for oid in list(func.stop_order_ids.values()):
+                try:
+                    client.cancel_order(oid)
+                except Exception:
+                    pass
+            func.stop_order_ids.clear()
 
     # ── UI refresh ──────────────────────────────────────────────────────────────
 
@@ -452,14 +589,27 @@ class Dashboard(tk.Tk):
         total_t = 0.0
 
         for (indicator, state_lbl, pnl_lbl, canvas, btn, func) in self.card_widgets:
-            # On/off indicator
-            if func.disabled:
+            # On/off indicator — check risk-stop BEFORE disabled
+            if func.stopped_by_risk:
+                indicator.configure(fg=self.PINK)
+                state_lbl.configure(
+                    text=f"RISK STOP  |  peak: ${func.peak_pnl:+.2f}  stop: ${func.stop_value:.2f}"
+                )
+                btn.configure(text="Turn ON", bg=self.PINK, activebackground=self.PINK, fg=self.TEXT)
+            elif func.disabled:
                 indicator.configure(fg=self.DARK_RED)
                 state_lbl.configure(text="OFF  |  manually disabled")
                 btn.configure(text="Turn ON", bg=self.DARK_RED, activebackground=self.DARK_RED, fg=self.TEXT)
             elif func.on:
                 indicator.configure(fg=self.GREEN)
-                state_lbl.configure(text="ON")
+                if func.stop_value > 0:
+                    t_now = func.tracker.realized + func.tracker.unrealized(securities)
+                    dist  = func.peak_pnl - t_now - func.stop_value
+                    state_lbl.configure(
+                        text=f"ON  |  stop: ${func.stop_value:.2f}  dist: ${dist:+.2f}"
+                    )
+                else:
+                    state_lbl.configure(text="ON")
                 btn.configure(text="Turn OFF", bg=self.GREEN, activebackground=self.GREEN, fg=self.BTN_FG)
             else:
                 indicator.configure(fg=self.RED)
