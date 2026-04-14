@@ -187,7 +187,6 @@ class Function:
         # ── Drawdown stop-loss ─────────────────────────────────────────────────
         self.stop_value      = stop_value  # max drawdown from peak allowed (0 = disabled)
         self.peak_pnl        = 0.0         # high-watermark PnL since last reset
-        self.stop_order_ids  = {}          # ticker -> order_id of resting stop-limit order
         self.stopped_by_risk = False       # True = auto-stopped by drawdown rule
 
     def suggested_stop_value(self, k: float = 2.0) -> float:
@@ -226,94 +225,15 @@ state = {
     "securities": {},   # latest {ticker: security_dict}, used for unrealized PnL
 }
 
-def _stop_price(pos: dict, peak_pnl: float, stop_value: float, realized: float) -> float:
-    """
-    Price at which this position's PnL contribution hits the stop threshold.
-
-    Works for both longs (qty > 0 → sell stop) and shorts (qty < 0 → buy stop).
-    The formula solves for `price` such that:
-        realized + qty * (price - avg_cost) == peak_pnl - stop_value
-    """
-    qty = pos["qty"]
-    return pos["avg_cost"] + (peak_pnl - stop_value - realized) / qty
-
-
-def _update_stop_orders(func: "Function", securities: dict):
-    """
-    Place (or cancel-and-replace) one resting limit stop order per open ticker.
-
-    Called every tick when the function is healthy and stop_value > 0.
-    Each order is sized to close the full position for that ticker.
-    """
-    if func.stop_value == 0 or not func.tracker._positions:
-        return
-
-    realized = func.tracker.realized
-
-    for ticker, pos in func.tracker._positions.items():
-        qty = pos["qty"]
-        if qty == 0:
-            continue
-
-        # Cancel old stop order for this ticker (silently ignore if already gone)
-        if ticker in func.stop_order_ids:
-            try:
-                func.tracked_client.cancel_order(func.stop_order_ids[ticker])
-            except Exception:
-                pass
-            del func.stop_order_ids[ticker]
-
-        # Compute unrealized of all OTHER tickers so stop_price is accurate
-        other_unrealized = sum(
-            pos2["qty"] * (
-                securities.get(t2, {}).get("bid" if pos2["qty"] > 0 else "ask",
-                                           securities.get(t2, {}).get("last", 0.0))
-                - pos2["avg_cost"]
-            )
-            for t2, pos2 in func.tracker._positions.items()
-            if t2 != ticker and pos2["qty"] != 0 and t2 in securities
-        )
-
-        stop_p = _stop_price(
-            pos,
-            func.peak_pnl,
-            func.stop_value,
-            realized + other_unrealized,
-        )
-
-        if stop_p <= 0:
-            continue
-
-        try:
-            # Use the raw client — stop orders are resting and haven't filled yet.
-            # Routing through TrackedClient would record a phantom trade immediately,
-            # corrupting the PnL tracker and triggering false stops.
-            raw = func.tracked_client._client
-            if qty > 0:
-                result = raw.sell_limit(ticker, abs(qty), stop_p)
-            else:
-                result = raw.buy_limit(ticker, abs(qty), stop_p)
-            func.stop_order_ids[ticker] = result.get("order_id")
-        except Exception:
-            pass
-
-
 def _trigger_stop(func: "Function", securities: dict, current_pnl: float):
     """
     Fire aggressive limit orders to close all positions, then disable the function.
 
-    Called when the drawdown from the peak exceeds stop_value.
+    Called when PnL has fallen stop_value below its peak.
+    Uses limit orders at the current bid/ask so they record in the tracker at
+    the expected fill price; they should fill on the same or next tick.
     """
-    # Cancel all resting stop orders
-    for ticker, oid in list(func.stop_order_ids.items()):
-        try:
-            func.tracked_client.cancel_order(oid)
-        except Exception:
-            pass
-    func.stop_order_ids.clear()
-
-    # Close every open position with an aggressive limit at the current best price
-    for ticker, pos in func.tracker._positions.items():
+    for ticker, pos in list(func.tracker._positions.items()):
         qty = pos["qty"]
         if qty == 0 or ticker not in securities:
             continue
@@ -361,30 +281,25 @@ def algo_loop():
             if func.disabled:
                 continue
 
-            # Auto-cycle cooldown
-            if not func.on:
+            # Auto-cycle: run the strategy function when on, count down cooldown when off
+            if func.on:
+                func.tracked_client.update_securities(securities)
+                try:
+                    func.on = func.func(securities, func.tracked_client)
+                except Exception as e:
+                    state["status"] = f"Error in {func.name}: {e}"
+            else:
                 func.off_ticks += 1
                 if func.off_ticks >= TICKS_OFF:
                     func.on        = True
                     func.off_ticks = 0
-                else:
-                    continue
 
-            func.tracked_client.update_securities(securities)
-
-            try:
-                func.on = func.func(securities, func.tracked_client)
-            except Exception as e:
-                state["status"] = f"Error in {func.name}: {e}"
-
-            # ── Drawdown stop-loss check ───────────────────────────────────────
+            # ── Drawdown stop-loss check (runs every tick, even during cooldown) ──
             if func.stop_value > 0 and not func.stopped_by_risk:
                 t = func.tracker.realized + func.tracker.unrealized(securities)
                 func.peak_pnl = max(func.peak_pnl, t)
                 if t <= func.peak_pnl - func.stop_value:
                     _trigger_stop(func, securities, t)
-                else:
-                    _update_stop_orders(func, securities)
 
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
@@ -555,18 +470,11 @@ class Dashboard(tk.Tk):
             # Re-enable: reset auto-cycle and clear any risk-stop state
             func.disabled        = False
             func.stopped_by_risk = False
-            func.stop_order_ids  = {}
             func.on              = True
             func.off_ticks       = 0
         else:
-            # Disable: kill it and cancel any resting stop orders
+            # Disable: kill it regardless of state
             func.disabled = True
-            for oid in list(func.stop_order_ids.values()):
-                try:
-                    client.cancel_order(oid)
-                except Exception:
-                    pass
-            func.stop_order_ids.clear()
 
     # ── UI refresh ──────────────────────────────────────────────────────────────
 
