@@ -181,6 +181,7 @@ class Function:
         self.off_ticks      = 0      # how many ticks spent in cooldown
         self.no_ticks       = False  # kept for compatibility
         self.disabled       = False  # user kill-switch: True=never run until re-enabled
+        self.pnl_history    = []     # rolling PnL history for the sparkline (max 150 pts)
         self.tracker        = PnLTracker()
         self.tracked_client = None   # set after client is created below
 
@@ -368,9 +369,14 @@ class Dashboard(tk.Tk):
                 command=lambda f=func: self._toggle_function(f)
             )
             btn.configure(bg=self.BTN_OFF, fg=self.BTN_FG, activebackground=self.BTN_OFF)
-            btn.pack(side="right")
+            btn.pack(side="right", padx=(8, 0))
 
-            self.card_widgets.append((indicator, state_lbl, pnl_lbl, btn, func))
+            # Sparkline canvas — sits between the PnL text and the button
+            canvas = tk.Canvas(card, width=120, height=50,
+                                bg=self.PANEL, highlightthickness=0)
+            canvas.pack(side="right", padx=(8, 8))
+
+            self.card_widgets.append((indicator, state_lbl, pnl_lbl, canvas, btn, func))
 
         # ── Model PnL total ─────────────────────────────────────────────────────
         tk.Frame(self, bg=self.SUBTEXT, height=1).pack(fill="x", padx=20, pady=(0, 10))
@@ -436,7 +442,7 @@ class Dashboard(tk.Tk):
 
         total_t = 0.0
 
-        for (indicator, state_lbl, pnl_lbl, btn, func) in self.card_widgets:
+        for (indicator, state_lbl, pnl_lbl, canvas, btn, func) in self.card_widgets:
             # On/off indicator
             if func.disabled:
                 indicator.configure(fg=self.DARK_RED)
@@ -462,10 +468,54 @@ class Dashboard(tk.Tk):
                 fg=self._pnl_color(t)
             )
 
+            # Record history and redraw sparkline
+            func.pnl_history.append(t)
+            func.pnl_history = func.pnl_history[-150:]
+            self._draw_sparkline(canvas, func.pnl_history, self._pnl_color(t))
+
         # Model total — just the sum of what each function shows above
         self.total_lbl.configure(text=f"${total_t:+.2f}", fg=self._pnl_color(total_t))
 
         self.after(200, self._refresh_ui)
+
+    def _draw_sparkline(self, canvas, history: list, color: str):
+        canvas.delete("all")
+        W, H, pad = 120, 50, 4
+
+        if len(history) < 2:
+            # Not enough data yet — just draw a dashed zero line
+            canvas.create_line(pad, H // 2, W - pad, H // 2,
+                                fill=self.SUBTEXT, dash=(2, 2))
+            return
+
+        lo, hi = min(history), max(history)
+        span    = (hi - lo) if hi != lo else 1.0
+
+        def fy(v):
+            # Flip so positive PnL is drawn upward
+            return H - pad - ((v - lo) / span) * (H - 2 * pad)
+
+        def fx(i):
+            return pad + i * (W - 2 * pad) / (len(history) - 1)
+
+        # Zero reference line
+        if lo <= 0 <= hi:
+            y0 = fy(0)
+        elif lo > 0:
+            y0 = H - pad   # all positive — zero is below the chart
+        else:
+            y0 = pad        # all negative — zero is above the chart
+        canvas.create_line(pad, y0, W - pad, y0, fill=self.SUBTEXT, dash=(2, 2))
+
+        pts = [(fx(i), fy(v)) for i, v in enumerate(history)]
+
+        # Filled area between the line and zero
+        poly = [pad, y0] + [c for pt in pts for c in pt] + [W - pad, y0]
+        canvas.create_polygon(poly, fill=color, outline="", stipple="gray25")
+
+        # The sparkline itself
+        line = [c for pt in pts for c in pt]
+        canvas.create_line(line, fill=color, width=1.5, smooth=True)
 
     def _style_run_btn(self, running: bool):
         if running:
