@@ -176,9 +176,10 @@ class Function:
     def __init__(self, func):
         self.func           = func
         self.name           = func.__name__
-        self.on             = True
-        self.off_ticks      = 0
-        self.no_ticks       = False
+        self.on             = True   # auto-cycle state: True=run this tick, False=cooldown
+        self.off_ticks      = 0      # how many ticks spent in cooldown
+        self.no_ticks       = False  # kept for compatibility
+        self.disabled       = False  # user kill-switch: True=never run until re-enabled
         self.tracker        = PnLTracker()
         self.tracked_client = None   # set after client is created below
 
@@ -208,6 +209,9 @@ state = {
 
 def algo_loop():
     pre_tick = -1
+
+    client.get_security("CRZY")
+
     while state["running"]:
         try:
             tick = client.get_case()["tick"]
@@ -230,9 +234,12 @@ def algo_loop():
             continue
 
         for func in functions:
+            # User kill-switch — completely independent of the auto-cycle
+            if func.disabled:
+                continue
+
+            # Auto-cycle cooldown
             if not func.on:
-                if func.no_ticks:
-                    continue   # manually disabled — never auto-restart
                 func.off_ticks += 1
                 if func.off_ticks >= TICKS_OFF:
                     func.on        = True
@@ -240,7 +247,6 @@ def algo_loop():
                 else:
                     continue
 
-            # Give the function its own tracked client with fresh prices
             func.tracked_client.update_securities(securities)
 
             try:
@@ -413,14 +419,14 @@ class Dashboard(tk.Tk):
             threading.Thread(target=algo_loop, daemon=True).start()
 
     def _toggle_function(self, func: Function):
-        if func.on:
-            func.on        = False
-            func.no_ticks  = True
+        if func.disabled:
+            # Re-enable: reset auto-cycle so it runs immediately next tick
+            func.disabled  = False
+            func.on        = True
             func.off_ticks = 0
         else:
-            func.on        = True
-            func.no_ticks  = False
-            func.off_ticks = 0
+            # Disable: kill it regardless of whether it's running or in cooldown
+            func.disabled  = True
 
     # ── UI refresh ──────────────────────────────────────────────────────────────
 
@@ -450,18 +456,21 @@ class Dashboard(tk.Tk):
 
         for (indicator, state_lbl, pnl_lbl, btn, func) in self.card_widgets:
             # On/off indicator
-            if func.on:
-                indicator.configure(fg=self.GREEN)
-                state_lbl.configure(text=f"ON  |  off_ticks: {func.off_ticks}")
-                btn.configure(text="Turn OFF", bg=self.BTN_OFF)
-            elif func.no_ticks:
+            if func.disabled:
+                # User manually killed — dark red, stays off until re-enabled
                 indicator.configure(fg=self.DARK_RED)
                 state_lbl.configure(text="OFF  |  manually disabled")
                 btn.configure(text="Turn ON", bg=self.BTN_ON)
+            elif func.on:
+                # Active — running this tick
+                indicator.configure(fg=self.GREEN)
+                state_lbl.configure(text="ON")
+                btn.configure(text="Turn OFF", bg=self.BTN_OFF)
             else:
+                # Auto cooldown — counting down to next run
                 indicator.configure(fg=self.RED)
-                state_lbl.configure(text=f"OFF  |  auto-restart in {TICKS_OFF - func.off_ticks} ticks")
-                btn.configure(text="Turn ON", bg=self.BTN_ON)
+                state_lbl.configure(text=f"COOLDOWN  |  {TICKS_OFF - func.off_ticks} ticks left")
+                btn.configure(text="Turn OFF", bg=self.BTN_OFF)
 
             # PnL
             r = func.tracker.realized
