@@ -135,176 +135,6 @@ def _calculate_metrics(bt, alpha_name, initial_capital):
         'BH_Final_Value': bt.iloc[-1]['BH_Portfolio']
     }
 
-
-def print_results(metrics):
-    """Pretty print backtest results"""
-    
-    print("\n" + "="*70)
-    print(f"ALPHA: {metrics['Alpha_Name']}")
-    print("="*70)
-    print(f"{'Metric':<35} {'Strategy':>15} {'Buy&Hold':>15}")
-    print("-"*70)
-    print(f"{'Total Return':<35} {metrics['Total_Return_%']:>14.2f}% {metrics['BH_Return_%']:>14.2f}%")
-    print(f"{'Excess Return':<35} {metrics['Excess_Return_%']:>14.2f}% {'-':>15}")
-    print(f"{'Annual Volatility':<35} {metrics['Annual_Volatility_%']:>14.2f}% {'-':>15}")
-    print(f"{'Sharpe Ratio':<35} {metrics['Sharpe_Ratio']:>14.2f} {metrics['BH_Sharpe']:>14.2f}")
-    print(f"{'Sortino Ratio':<35} {metrics['Sortino_Ratio']:>14.2f} {metrics['BH_Sortino']:>14.2f}")
-    print(f"{'Max Drawdown':<35} {metrics['Max_Drawdown_%']:>14.2f}% {'-':>15}")
-    print(f"{'Win Rate':<35} {metrics['Win_Rate_%']:>14.2f}% {'-':>15}")
-    print(f"{'Number of Trades':<35} {metrics['Num_Trades']:>14.0f} {'-':>15}")
-    print(f"{'Final Portfolio Value':<35} ${metrics['Final_Value']:>13,.0f} ${metrics['BH_Final_Value']:>13,.0f}")
-    print("="*70)
-
-
-# ============================================================================
-# EXAMPLE ALPHAS - MODIFY THESE OR CREATE YOUR OWN
-# ============================================================================
-
-def momentum_alpha(df, lookback=20):
-    """
-    Momentum: Buy stocks with positive recent returns
-    
-    Args:
-        df: DataFrame with OHLCV
-        lookback: days to look back for returns
-    
-    Returns:
-        Series with signals [-1, 1]
-    """
-    returns = df['Close'].pct_change(lookback)
-    signals = np.where(returns > 0, 1, -1)
-    signals = np.where(np.isnan(returns), 0, signals)
-    return pd.Series(signals, index=df.index)
-
-
-def mean_reversion_alpha(df, window=20, num_std=2):
-    """
-    Mean Reversion: Buy oversold (price < lower band), sell overbought (price > upper band)
-    Uses Bollinger Bands
-    
-    Args:
-        df: DataFrame with OHLCV
-        window: rolling window for bands
-        num_std: number of standard deviations
-    
-    Returns:
-        Series with signals [-1, 0, 1]
-    """
-    close = df['Close']
-    sma = close.rolling(window).mean()
-    std = close.rolling(window).std()
-    
-    upper = sma + (std * num_std)
-    lower = sma - (std * num_std)
-    
-    signals = np.zeros(len(df))
-    signals[close < lower] = 1   # Oversold - buy
-    signals[close > upper] = -1  # Overbought - sell
-    
-    return pd.Series(signals, index=df.index)
-
-
-def macd_alpha(df):
-    """
-    MACD: Buy when MACD > signal line, sell when MACD < signal line
-    
-    Args:
-        df: DataFrame with OHLCV
-    
-    Returns:
-        Series with signals [-1, 1]
-    """
-    close = df['Close']
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal_line = macd.ewm(span=9, adjust=False).mean()
-    
-    signals = np.where(macd > signal_line, 1, -1)
-    return pd.Series(signals, index=df.index)
-
-
-def rsi_alpha(df, threshold_low=30, threshold_high=70):
-    """
-    RSI: Buy when oversold (RSI < 30), sell when overbought (RSI > 70)
-    
-    Args:
-        df: DataFrame with OHLCV
-        threshold_low: RSI level for oversold (buy)
-        threshold_high: RSI level for overbought (sell)
-    
-    Returns:
-        Series with signals [-1, 0, 1]
-    """
-    close = df['Close']
-    delta = close.diff()
-    
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
-    
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    
-    signals = np.zeros(len(df))
-    signals[rsi < threshold_low] = 1   # Oversold - buy
-    signals[rsi > threshold_high] = -1 # Overbought - sell
-    
-    return pd.Series(signals, index=df.index)
-
-
-def sma_crossover_alpha(df, fast=20, slow=50):
-    """
-    SMA Crossover: Buy when fast MA > slow MA, sell when fast MA < slow MA
-    
-    Args:
-        df: DataFrame with OHLCV
-        fast: fast moving average period
-        slow: slow moving average period
-    
-    Returns:
-        Series with signals [-1, 1]
-    """
-    close = df['Close']
-    ma_fast = close.rolling(fast).mean()
-    ma_slow = close.rolling(slow).mean()
-    
-    signals = np.where(ma_fast > ma_slow, 1, -1)
-    return pd.Series(signals, index=df.index)
-
-
-def volume_alpha(df, window=20, volume_multiplier=1.5):
-    """
-    Volume: Trade larger moves when volume is high
-    
-    Args:
-        df: DataFrame with OHLCV
-        window: rolling window for average volume
-        volume_multiplier: how much above average to trigger signal
-    
-    Returns:
-        Series with signals [-1, 0, 1]
-    """
-    close = df['Close']
-    volume = df['Volume']
-    
-    price_change = close.pct_change()
-    avg_volume = volume.rolling(window).mean()
-    volume_ratio = volume / avg_volume
-    
-    signals = np.zeros(len(df))
-    signals[(price_change > 0) & (volume_ratio > volume_multiplier)] = 1   # Strong up
-    signals[(price_change < 0) & (volume_ratio > volume_multiplier)] = -1  # Strong down
-    
-    return pd.Series(signals, index=df.index)
-
-
-# ============================================================================
-# COMPARISON FUNCTION
-# ============================================================================
-
 def compare_alphas(df, alpha_functions_dict, initial_capital=100000):
     """
     Test multiple alphas and compare them
@@ -350,10 +180,123 @@ def compare_alphas(df, alpha_functions_dict, initial_capital=100000):
     
     return comparison_df
 
+def print_results(metrics):
+    """Pretty print backtest results"""
+    
+    print("\n" + "="*70)
+    print(f"ALPHA: {metrics['Alpha_Name']}")
+    print("="*70)
+    print(f"{'Metric':<35} {'Strategy':>15} {'Buy&Hold':>15}")
+    print("-"*70)
+    print(f"{'Total Return':<35} {metrics['Total_Return_%']:>14.2f}% {metrics['BH_Return_%']:>14.2f}%")
+    print(f"{'Excess Return':<35} {metrics['Excess_Return_%']:>14.2f}% {'-':>15}")
+    print(f"{'Annual Volatility':<35} {metrics['Annual_Volatility_%']:>14.2f}% {'-':>15}")
+    print(f"{'Sharpe Ratio':<35} {metrics['Sharpe_Ratio']:>14.2f} {metrics['BH_Sharpe']:>14.2f}")
+    print(f"{'Sortino Ratio':<35} {metrics['Sortino_Ratio']:>14.2f} {metrics['BH_Sortino']:>14.2f}")
+    print(f"{'Max Drawdown':<35} {metrics['Max_Drawdown_%']:>14.2f}% {'-':>15}")
+    print(f"{'Win Rate':<35} {metrics['Win_Rate_%']:>14.2f}% {'-':>15}")
+    print(f"{'Number of Trades':<35} {metrics['Num_Trades']:>14.0f} {'-':>15}")
+    print(f"{'Final Portfolio Value':<35} ${metrics['Final_Value']:>13,.0f} ${metrics['BH_Final_Value']:>13,.0f}")
+    print("="*70)
+
+
 
 # ============================================================================
 # MAIN - EASY TO MODIFY AND TEST NEW ALPHAS
 # ============================================================================
+def calculate_atr(df, period=14):
+    """Calculate Average True Range"""
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    atr = true_range.rolling(period).mean()
+    return atr
+
+def calculate_alpha(df):
+    """
+    Multi-factor alpha combining:
+    1. Volume-weighted momentum
+    2. Volatility-adjusted mean reversion
+    3. Intraday strength (Close vs Open)
+    4. Volume confirmation
+    """
+    
+    # Make a copy to avoid warnings
+    data = df.copy()
+    
+    # For each stock, calculate rolling metrics
+    stocks = data['Stock'].unique()
+    alphas = []
+    
+    for stock in stocks:
+        stock_data = data[data['Stock'] == stock].sort_values('Date').copy()
+        
+        # Initialize with NaN
+        stock_data['alpha'] = np.nan
+        
+        # Need minimum 20-30 days of data for reliable calculations
+        if len(stock_data) < 30:
+            print(f"Warning: {stock} has only {len(stock_data)} days, skipping")
+            alphas.append(stock_data[['Date', 'Stock', 'alpha']])
+            continue
+        
+        # === Factor 1: Volume-Weighted Momentum (20-day) ===
+        stock_data['returns'] = stock_data['Close'].pct_change()
+        stock_data['volume_ma'] = stock_data['Volume'].rolling(20, min_periods=1).mean()
+        stock_data['volume_ratio'] = stock_data['Volume'] / stock_data['volume_ma']
+        stock_data['vw_momentum'] = stock_data['returns'].rolling(5, min_periods=1).mean() * stock_data['volume_ratio']
+        
+        # === Factor 2: Volatility-Adjusted Mean Reversion ===
+        stock_data['atr'] = calculate_atr(stock_data)
+        stock_data['ma_10'] = stock_data['Close'].rolling(10, min_periods=1).mean()
+        stock_data['std_10'] = stock_data['Close'].rolling(10, min_periods=1).std()
+        stock_data['price_vs_ma'] = (stock_data['Close'] - stock_data['ma_10']) / (stock_data['std_10'] + 1e-8)
+        stock_data['mean_reversion'] = -stock_data['price_vs_ma'] / (stock_data['atr'] + 1e-8)
+        
+        # === Factor 3: Intraday Strength ===
+        stock_data['intraday_range'] = stock_data['High'] - stock_data['Low']
+        stock_data['intraday_strength'] = (stock_data['Close'] - stock_data['Open']) / (stock_data['intraday_range'] + 1e-8)
+        stock_data['intraday_signal'] = stock_data['intraday_strength'].rolling(3, min_periods=1).mean()
+        
+        # === Factor 4: Volume Breakout ===
+        stock_data['volume_ma_10'] = stock_data['Volume'].rolling(10, min_periods=1).mean()
+        stock_data['volume_surge'] = (stock_data['Volume'] > stock_data['volume_ma_10'] * 1.5).astype(int)
+        stock_data['high_10_max'] = stock_data['High'].rolling(10, min_periods=1).max().shift(1)
+        stock_data['price_breakout'] = (stock_data['Close'] > stock_data['high_10_max']).astype(int)
+        stock_data['breakout_signal'] = (stock_data['volume_surge'] + stock_data['price_breakout']) / 2
+        
+        # === Factor 5: Trend Following (EMA crossover) ===
+        stock_data['ema_fast'] = stock_data['Close'].ewm(span=5, adjust=False, min_periods=1).mean()
+        stock_data['ema_slow'] = stock_data['Close'].ewm(span=15, adjust=False, min_periods=1).mean()
+        stock_data['trend_signal'] = (stock_data['ema_fast'] - stock_data['ema_slow']) / (stock_data['Close'] + 1e-8)
+        
+        # === Combine factors with optimized weights ===
+        stock_data['alpha_raw'] = (
+            0.35 * stock_data['vw_momentum'].fillna(0) +
+            0.25 * stock_data['mean_reversion'].fillna(0) +
+            0.20 * stock_data['intraday_signal'].fillna(0) +
+            0.10 * stock_data['breakout_signal'].fillna(0) +
+            0.10 * stock_data['trend_signal'].fillna(0)
+        )
+        
+        # Normalize alpha within each stock (z-score) - use expanding window to avoid lookahead
+        alpha_mean = stock_data['alpha_raw'].expanding(min_periods=1).mean()
+        alpha_std = stock_data['alpha_raw'].expanding(min_periods=1).std()
+        stock_data['alpha'] = (stock_data['alpha_raw'] - alpha_mean) / (alpha_std + 1e-8)
+        
+        # Clip extreme values
+        stock_data['alpha'] = stock_data['alpha'].clip(-3, 3)
+        
+        # Keep only rows with valid alpha (after at least 20 days of data)
+        stock_data.loc[stock_data.index[:20], 'alpha'] = np.nan
+        
+        alphas.append(stock_data[['Date', 'Stock', 'alpha']])
+    
+    # Combine all stocks
+    result = pd.concat(alphas, ignore_index=True)
+    
+    return result
 
 if __name__ == "__main__":
     
@@ -366,10 +309,9 @@ if __name__ == "__main__":
         df = pd.read_csv(csv_file)
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.sort_values('Date')
-        df = df.set_index('Date')
         
         # Check required columns
-        required = ['Close', 'Volume', 'High', 'Low', 'Open']
+        required = ['Close', 'Volume', 'High', 'Low', 'Open','Stock','Date']
         assert all(col in df.columns for col in required), f"Missing columns. Need: {required}"
         
         print(f"✓ Loaded {len(df)} rows")
@@ -397,15 +339,21 @@ if __name__ == "__main__":
     
     # Test one alpha
     print("\n--- Testing Momentum Alpha ---")
-    signals = momentum_alpha(df, lookback=20)
-    result = backtest_alpha(df, signals, "Momentum_20d")
+    signals = calculate_alpha(df)
+
+    new_df=df[df['Stock']=='GAMMA'].sort_values('Date').copy()
+    sd = signals[signals['Stock'] == 'GAMMA'].sort_values('Date').copy()
+    sd=sd["alpha"].copy()
+
+    result = backtest_alpha(new_df, sd, "calculate_alpha")
+
     print_results(result['metrics'])
     
     # ===== STEP 3: COMPARE MULTIPLE ALPHAS =====
     print("\n" + "="*70)
     print("COMPARING MULTIPLE ALPHAS")
     print("="*70)
-    
+    """
     alphas_to_test = {
         'Momentum_20d': lambda df: momentum_alpha(df, lookback=20),
         'Momentum_10d': lambda df: momentum_alpha(df, lookback=10),
@@ -414,7 +362,8 @@ if __name__ == "__main__":
         'RSI': lambda df: rsi_alpha(df),
         'SMA_20_50': lambda df: sma_crossover_alpha(df, fast=20, slow=50),
         'Volume': lambda df: volume_alpha(df),
-    }
+    }"""
+    alphas_to_test={"calculate_alpha":lambda df: calculate_alpha(df)}
     
     comparison = compare_alphas(df, alphas_to_test)
     
