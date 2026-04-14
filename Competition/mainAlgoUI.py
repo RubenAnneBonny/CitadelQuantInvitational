@@ -3,15 +3,152 @@ import tkinter as tk
 from tkinter import font
 from rit_client import RITClient
 
+# ── PnL tracker ────────────────────────────────────────────────────────────────
+
+class PnLTracker:
+    """
+    Records every buy/sell made by one function and calculates its PnL.
+
+    Realized PnL is locked in whenever a position is reduced or closed.
+    Unrealized PnL is the open position valued at the current market price.
+    """
+
+    def __init__(self):
+        self.realized   = 0.0
+        self._positions = {}   # ticker -> {"qty": int, "avg_cost": float}
+
+    def record(self, ticker: str, action: str, quantity: int, price: float):
+        """Call this every time the function places an order."""
+        if ticker not in self._positions:
+            self._positions[ticker] = {"qty": 0, "avg_cost": 0.0}
+
+        pos        = self._positions[ticker]
+        qty        = pos["qty"]
+        signed_qty = quantity if action == "BUY" else -quantity
+
+        if qty == 0:
+            # Opening a brand new position
+            pos["qty"]      = signed_qty
+            pos["avg_cost"] = price
+
+        elif (qty > 0 and signed_qty > 0) or (qty < 0 and signed_qty < 0):
+            # Adding to an existing position in the same direction → update average cost
+            total_cost      = abs(qty) * pos["avg_cost"] + abs(signed_qty) * price
+            pos["qty"]     += signed_qty
+            pos["avg_cost"] = total_cost / abs(pos["qty"])
+
+        else:
+            # Reducing, closing, or reversing the position
+            if abs(signed_qty) <= abs(qty):
+                # Partial or full close — lock in realized PnL
+                if qty > 0:
+                    self.realized += abs(signed_qty) * (price - pos["avg_cost"])
+                else:
+                    self.realized += abs(signed_qty) * (pos["avg_cost"] - price)
+                pos["qty"] += signed_qty
+                if pos["qty"] == 0:
+                    pos["avg_cost"] = 0.0
+            else:
+                # Full close + reversal to the other side
+                if qty > 0:
+                    self.realized += abs(qty) * (price - pos["avg_cost"])
+                else:
+                    self.realized += abs(qty) * (pos["avg_cost"] - price)
+                pos["qty"]      = signed_qty + qty
+                pos["avg_cost"] = price
+
+    def unrealized(self, current_prices: dict) -> float:
+        """
+        Unrealized PnL given a dict of {ticker: current_price}.
+        Uses the security's last price if available.
+        """
+        total = 0.0
+        for ticker, pos in self._positions.items():
+            if pos["qty"] == 0 or ticker not in current_prices:
+                continue
+            current = current_prices[ticker]
+            if pos["qty"] > 0:
+                total += pos["qty"]  * (current - pos["avg_cost"])
+            else:
+                total += -pos["qty"] * (pos["avg_cost"] - current)
+        return total
+
+    def total(self, current_prices: dict) -> float:
+        return self.realized + self.unrealized(current_prices)
+
+
+# ── Tracked client wrapper ─────────────────────────────────────────────────────
+
+class TrackedClient:
+    """
+    Wraps RITClient so every order placed through it is recorded in a PnLTracker.
+    All other RITClient methods (get_case, get_securities, etc.) pass through unchanged.
+
+    For market orders the fill price is estimated from the current bid/ask.
+    For limit orders the limit price is used.
+    """
+
+    def __init__(self, base_client: RITClient, tracker: PnLTracker):
+        self._client    = base_client
+        self._tracker   = tracker
+        self._securities = {}   # updated each tick before the function runs
+
+    def update_securities(self, securities: dict):
+        self._securities = securities
+
+    # ── Intercept order methods ────────────────────────────────────────────────
+
+    def buy_market(self, ticker: str, quantity: int) -> dict:
+        result = self._client.buy_market(ticker, quantity)
+        price  = self._securities.get(ticker.upper(), {}).get("ask", 0.0)
+        self._tracker.record(ticker.upper(), "BUY", quantity, price)
+        return result
+
+    def sell_market(self, ticker: str, quantity: int) -> dict:
+        result = self._client.sell_market(ticker, quantity)
+        price  = self._securities.get(ticker.upper(), {}).get("bid", 0.0)
+        self._tracker.record(ticker.upper(), "SELL", quantity, price)
+        return result
+
+    def buy_limit(self, ticker: str, quantity: int, price: float) -> dict:
+        result = self._client.buy_limit(ticker, quantity, price)
+        self._tracker.record(ticker.upper(), "BUY", quantity, price)
+        return result
+
+    def sell_limit(self, ticker: str, quantity: int, price: float) -> dict:
+        result = self._client.sell_limit(ticker, quantity, price)
+        self._tracker.record(ticker.upper(), "SELL", quantity, price)
+        return result
+
+    def place_market_order(self, ticker: str, action: str, quantity: int) -> dict:
+        result = self._client.place_market_order(ticker, action, quantity)
+        action = action.upper()
+        price  = (self._securities.get(ticker.upper(), {}).get("ask", 0.0)
+                  if action == "BUY"
+                  else self._securities.get(ticker.upper(), {}).get("bid", 0.0))
+        self._tracker.record(ticker.upper(), action, quantity, price)
+        return result
+
+    def place_limit_order(self, ticker: str, action: str, quantity: int, price: float) -> dict:
+        result = self._client.place_limit_order(ticker, action, quantity, price)
+        self._tracker.record(ticker.upper(), action.upper(), quantity, price)
+        return result
+
+    # ── Proxy everything else to the base client ───────────────────────────────
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+
 # ── Strategy functions ─────────────────────────────────────────────────────────
 
-def spread(securities, ritClient: RITClient) -> bool:
+def spread(securities, ritClient) -> bool:
     security = securities["CRZY"]
     diff = (security["ask"] - security["bid"]) * 100
     ritClient.buy_market("CRZY", diff)
     return False
 
-def tame_spread(securities, ritClient: RITClient) -> bool:
+def tame_spread(securities, ritClient) -> bool:
     security = securities["TAME"]
     diff = (security["ask"] - security["bid"]) * 100
     ritClient.sell_market("TAME", diff)
@@ -21,29 +158,36 @@ def tame_spread(securities, ritClient: RITClient) -> bool:
 
 class Function:
     def __init__(self, func):
-        self.func     = func
-        self.name     = func.__name__
-        self.on       = True
-        self.off_ticks = 0
-        self.no_ticks  = False   # True = stay off forever (manual disable)
+        self.func           = func
+        self.name           = func.__name__
+        self.on             = True
+        self.off_ticks      = 0
+        self.no_ticks       = False
+        self.tracker        = PnLTracker()
+        self.tracked_client = None   # set after client is created below
 
-# ── Register functions here ────────────────────────────────────────────────────
+# ── Client + function registry ─────────────────────────────────────────────────
+
+client = RITClient()
 
 functions = [
     Function(spread),
     Function(tame_spread),
 ]
 
-# ── Algo loop (runs in background thread) ─────────────────────────────────────
+# Wire up each function's tracked client now that `client` exists
+for f in functions:
+    f.tracked_client = TrackedClient(client, f.tracker)
+
+# ── Algo loop ──────────────────────────────────────────────────────────────────
 
 TICKS_OFF = 5
-client    = RITClient()
 
-# Shared state written by the algo thread, read by the UI thread
 state = {
-    "tick":    0,
-    "running": False,
-    "status":  "Stopped",
+    "tick":       0,
+    "running":    False,
+    "status":     "Stopped",
+    "securities": {},   # latest {ticker: security_dict}, used for unrealized PnL
 }
 
 def algo_loop():
@@ -58,45 +202,52 @@ def algo_loop():
         if tick == pre_tick:
             continue
 
-        pre_tick       = tick
-        state["tick"]  = tick
+        pre_tick        = tick
+        state["tick"]   = tick
         state["status"] = "Running"
 
         try:
             securities = {s["ticker"]: s for s in client.get_securities()}
+            state["securities"] = securities
         except Exception as e:
             state["status"] = f"Error fetching securities: {e}"
             continue
 
         for func in functions:
             if not func.on:
-                if not func.no_ticks:
-                    func.off_ticks += 1
+                if func.no_ticks:
+                    continue   # manually disabled — never auto-restart
+                func.off_ticks += 1
                 if func.off_ticks >= TICKS_OFF:
                     func.on        = True
                     func.off_ticks = 0
                 else:
                     continue
 
+            # Give the function its own tracked client with fresh prices
+            func.tracked_client.update_securities(securities)
+
             try:
-                func.on = func.func(securities, client)
+                func.on = func.func(securities, func.tracked_client)
             except Exception as e:
                 state["status"] = f"Error in {func.name}: {e}"
 
-# ── Dashboard UI ───────────────────────────────────────────────────────────────
+# ── Dashboard ──────────────────────────────────────────────────────────────────
 
 class Dashboard(tk.Tk):
-    # Colours
-    BG          = "#1e1e2e"
-    PANEL       = "#2a2a3d"
-    GREEN       = "#3ddc84"
-    RED         = "#ff5c5c"
-    AMBER       = "#ffc44d"
-    TEXT        = "#e0e0e0"
-    SUBTEXT     = "#888888"
-    BTN_ON      = "#3ddc84"
-    BTN_OFF     = "#ff5c5c"
-    BTN_FG      = "#1e1e2e"
+    BG       = "#1e1e2e"
+    PANEL    = "#2a2a3d"
+    GREEN    = "#3ddc84"
+    RED      = "#ff5c5c"
+    DARK_RED = "#8b1a1a"
+    AMBER    = "#ffc44d"
+    TEXT     = "#e0e0e0"
+    SUBTEXT  = "#888888"
+    POS_PNL  = "#3ddc84"   # positive PnL
+    NEG_PNL  = "#ff5c5c"   # negative PnL
+    BTN_ON   = "#3ddc84"
+    BTN_OFF  = "#ff5c5c"
+    BTN_FG   = "#1e1e2e"
 
     def __init__(self):
         super().__init__()
@@ -104,12 +255,14 @@ class Dashboard(tk.Tk):
         self.configure(bg=self.BG)
         self.resizable(False, False)
 
-        title_font  = font.Font(family="Segoe UI", size=14, weight="bold")
-        label_font  = font.Font(family="Segoe UI", size=10)
-        mono_font   = font.Font(family="Consolas",  size=10)
-        btn_font    = font.Font(family="Segoe UI", size=9,  weight="bold")
-        big_font    = font.Font(family="Segoe UI", size=22, weight="bold")
-        small_font  = font.Font(family="Segoe UI", size=8)
+        title_font = font.Font(family="Segoe UI",  size=14, weight="bold")
+        label_font = font.Font(family="Segoe UI",  size=10)
+        mono_font  = font.Font(family="Consolas",  size=10)
+        btn_font   = font.Font(family="Segoe UI",  size=9,  weight="bold")
+        big_font   = font.Font(family="Segoe UI",  size=22, weight="bold")
+        small_font = font.Font(family="Segoe UI",  size=8)
+        pnl_font   = font.Font(family="Consolas",  size=9)
+        total_font = font.Font(family="Segoe UI",  size=12, weight="bold")
 
         # ── Header ─────────────────────────────────────────────────────────────
         header = tk.Frame(self, bg=self.BG, pady=12)
@@ -118,7 +271,6 @@ class Dashboard(tk.Tk):
         tk.Label(header, text="RIT Algo Dashboard",
                  font=title_font, bg=self.BG, fg=self.TEXT).pack(side="left")
 
-        # Start / Stop button
         self.run_btn = tk.Button(
             header, text="START", width=10,
             font=btn_font, relief="flat", cursor="hand2",
@@ -131,7 +283,6 @@ class Dashboard(tk.Tk):
         status_frame = tk.Frame(self, bg=self.PANEL, pady=10)
         status_frame.pack(fill="x", padx=20, pady=(0, 12))
 
-        # Tick counter
         tick_col = tk.Frame(status_frame, bg=self.PANEL, padx=20)
         tick_col.pack(side="left")
         tk.Label(tick_col, text="TICK", font=small_font,
@@ -140,11 +291,9 @@ class Dashboard(tk.Tk):
                                    font=big_font, bg=self.PANEL, fg=self.AMBER)
         self.tick_label.pack()
 
-        # Divider
         tk.Frame(status_frame, bg=self.SUBTEXT, width=1).pack(
             side="left", fill="y", padx=16, pady=6)
 
-        # Status text
         status_col = tk.Frame(status_frame, bg=self.PANEL, padx=4)
         status_col.pack(side="left")
         tk.Label(status_col, text="STATUS", font=small_font,
@@ -158,30 +307,40 @@ class Dashboard(tk.Tk):
                  bg=self.BG, fg=self.SUBTEXT).pack(anchor="w", padx=20, pady=(0, 4))
 
         cards_frame = tk.Frame(self, bg=self.BG)
-        cards_frame.pack(fill="x", padx=20, pady=(0, 16))
+        cards_frame.pack(fill="x", padx=20, pady=(0, 12))
 
-        self.card_widgets = []   # list of (indicator, name_label, status_label, toggle_btn)
+        self.card_widgets = []
 
         for func in functions:
             card = tk.Frame(cards_frame, bg=self.PANEL, pady=10, padx=14)
             card.pack(fill="x", pady=4)
 
-            # Coloured dot
-            indicator = tk.Label(card, text="●", font=font.Font(size=14),
+            # Left: dot + name + state sub-text
+            left = tk.Frame(card, bg=self.PANEL)
+            left.pack(side="left", fill="x", expand=True)
+
+            top_row = tk.Frame(left, bg=self.PANEL)
+            top_row.pack(anchor="w")
+
+            indicator = tk.Label(top_row, text="●", font=font.Font(size=14),
                                   bg=self.PANEL, fg=self.GREEN)
-            indicator.pack(side="left", padx=(0, 10))
+            indicator.pack(side="left", padx=(0, 8))
 
-            # Name + sub-status
-            text_col = tk.Frame(card, bg=self.PANEL)
-            text_col.pack(side="left", fill="x", expand=True)
-            name_lbl = tk.Label(text_col, text=func.name,
-                                 font=mono_font, bg=self.PANEL, fg=self.TEXT, anchor="w")
-            name_lbl.pack(anchor="w")
-            sub_lbl = tk.Label(text_col, text="ON  |  off_ticks: 0",
-                                font=small_font, bg=self.PANEL, fg=self.SUBTEXT, anchor="w")
-            sub_lbl.pack(anchor="w")
+            name_lbl = tk.Label(top_row, text=func.name,
+                                 font=mono_font, bg=self.PANEL, fg=self.TEXT)
+            name_lbl.pack(side="left")
 
-            # Toggle button
+            state_lbl = tk.Label(left, text="ON  |  off_ticks: 0",
+                                  font=small_font, bg=self.PANEL, fg=self.SUBTEXT, anchor="w")
+            state_lbl.pack(anchor="w", padx=(22, 0))
+
+            # PnL row
+            pnl_lbl = tk.Label(left,
+                                text="R: $0.00   U: $0.00   Total: $0.00",
+                                font=pnl_font, bg=self.PANEL, fg=self.SUBTEXT, anchor="w")
+            pnl_lbl.pack(anchor="w", padx=(22, 0), pady=(2, 0))
+
+            # Right: toggle button
             btn = tk.Button(
                 card, text="Turn OFF", width=9,
                 font=btn_font, relief="flat", cursor="hand2",
@@ -190,9 +349,41 @@ class Dashboard(tk.Tk):
             btn.configure(bg=self.BTN_OFF, fg=self.BTN_FG, activebackground=self.BTN_OFF)
             btn.pack(side="right")
 
-            self.card_widgets.append((indicator, sub_lbl, btn, func))
+            self.card_widgets.append((indicator, state_lbl, pnl_lbl, btn, func))
 
-        # ── Start polling UI updates ────────────────────────────────────────────
+        # ── Model PnL total ─────────────────────────────────────────────────────
+        tk.Frame(self, bg=self.SUBTEXT, height=1).pack(fill="x", padx=20, pady=(0, 10))
+
+        total_frame = tk.Frame(self, bg=self.PANEL, pady=12, padx=16)
+        total_frame.pack(fill="x", padx=20, pady=(0, 16))
+
+        tk.Label(total_frame, text="MODEL PnL", font=small_font,
+                 bg=self.PANEL, fg=self.SUBTEXT).pack(anchor="w")
+
+        pnl_row = tk.Frame(total_frame, bg=self.PANEL)
+        pnl_row.pack(anchor="w", pady=(4, 0))
+
+        # Realized
+        tk.Label(pnl_row, text="Realized", font=small_font,
+                 bg=self.PANEL, fg=self.SUBTEXT).grid(row=0, column=0, sticky="w", padx=(0, 16))
+        self.total_r_lbl = tk.Label(pnl_row, text="$0.00",
+                                     font=total_font, bg=self.PANEL, fg=self.SUBTEXT)
+        self.total_r_lbl.grid(row=1, column=0, sticky="w", padx=(0, 16))
+
+        # Unrealized
+        tk.Label(pnl_row, text="Unrealized", font=small_font,
+                 bg=self.PANEL, fg=self.SUBTEXT).grid(row=0, column=1, sticky="w", padx=(0, 16))
+        self.total_u_lbl = tk.Label(pnl_row, text="$0.00",
+                                     font=total_font, bg=self.PANEL, fg=self.SUBTEXT)
+        self.total_u_lbl.grid(row=1, column=1, sticky="w", padx=(0, 16))
+
+        # Total
+        tk.Label(pnl_row, text="Total", font=small_font,
+                 bg=self.PANEL, fg=self.SUBTEXT).grid(row=0, column=2, sticky="w")
+        self.total_lbl = tk.Label(pnl_row, text="$0.00",
+                                   font=total_font, bg=self.PANEL, fg=self.SUBTEXT)
+        self.total_lbl.grid(row=1, column=2, sticky="w")
+
         self._refresh_ui()
 
     # ── Button actions ──────────────────────────────────────────────────────────
@@ -203,54 +394,84 @@ class Dashboard(tk.Tk):
             state["status"]  = "Stopped"
         else:
             state["running"] = True
-            t = threading.Thread(target=algo_loop, daemon=True)
-            t.start()
+            threading.Thread(target=algo_loop, daemon=True).start()
 
     def _toggle_function(self, func: Function):
-        if func.on or not func.no_ticks:
-            # Turn OFF manually → set no_ticks so it won't auto-restart
-            func.on       = False
-            func.no_ticks = True
+        if func.on:
+            func.on        = False
+            func.no_ticks  = True
             func.off_ticks = 0
         else:
-            # Turn ON manually
-            func.on       = True
-            func.no_ticks = False
+            func.on        = True
+            func.no_ticks  = False
             func.off_ticks = 0
 
-    # ── UI refresh (polls every 200 ms) ────────────────────────────────────────
+    # ── UI refresh ──────────────────────────────────────────────────────────────
+
+    def _pnl_color(self, value: float) -> str:
+        if value > 0:
+            return self.POS_PNL
+        if value < 0:
+            return self.NEG_PNL
+        return self.SUBTEXT
 
     def _refresh_ui(self):
         running = state["running"]
         self._style_run_btn(running)
 
-        # Tick + status
-        self.tick_label.configure(
-            text=str(state["tick"]) if running else "—"
-        )
+        self.tick_label.configure(text=str(state["tick"]) if running else "—")
+
         status_text  = state["status"]
-        status_color = self.GREEN if status_text == "Running" else (
+        status_color = (self.GREEN if status_text == "Running" else
                         self.AMBER if status_text.startswith("Error") else self.RED)
         self.status_label.configure(text=status_text, fg=status_color)
 
-        # Function cards
-        for (indicator, sub_lbl, btn, func) in self.card_widgets:
+        # Current prices for unrealized PnL
+        current_prices = {t: s.get("last", 0.0) for t, s in state["securities"].items()}
+
+        total_r = 0.0
+        total_u = 0.0
+
+        for (indicator, state_lbl, pnl_lbl, btn, func) in self.card_widgets:
+            # On/off indicator
             if func.on:
                 indicator.configure(fg=self.GREEN)
-                sub_lbl.configure(text=f"ON  |  off_ticks: {func.off_ticks}")
+                state_lbl.configure(text=f"ON  |  off_ticks: {func.off_ticks}")
                 btn.configure(text="Turn OFF", bg=self.BTN_OFF)
+            elif func.no_ticks:
+                indicator.configure(fg=self.DARK_RED)
+                state_lbl.configure(text="OFF  |  manually disabled")
+                btn.configure(text="Turn ON", bg=self.BTN_ON)
             else:
                 indicator.configure(fg=self.RED)
-                mode = "manual (no auto-restart)" if func.no_ticks else f"auto-restart in {TICKS_OFF - func.off_ticks} ticks"
-                sub_lbl.configure(text=f"OFF  |  {mode}")
+                state_lbl.configure(text=f"OFF  |  auto-restart in {TICKS_OFF - func.off_ticks} ticks")
                 btn.configure(text="Turn ON", bg=self.BTN_ON)
+
+            # PnL
+            r = func.tracker.realized
+            u = func.tracker.unrealized(current_prices)
+            t = r + u
+
+            total_r += r
+            total_u += u
+
+            pnl_lbl.configure(
+                text=f"R: ${r:+.2f}   U: ${u:+.2f}   Total: ${t:+.2f}",
+                fg=self._pnl_color(t)
+            )
+
+        # Model totals
+        total_t = total_r + total_u
+        self.total_r_lbl.configure(text=f"${total_r:+.2f}", fg=self._pnl_color(total_r))
+        self.total_u_lbl.configure(text=f"${total_u:+.2f}", fg=self._pnl_color(total_u))
+        self.total_lbl.configure(text=f"${total_t:+.2f}",   fg=self._pnl_color(total_t))
 
         self.after(200, self._refresh_ui)
 
     def _style_run_btn(self, running: bool):
         if running:
-            self.run_btn.configure(text="STOP", bg="#ff5c5c", fg=self.BTN_FG,
-                                   activebackground="#ff5c5c")
+            self.run_btn.configure(text="STOP",  bg=self.RED,   fg=self.BTN_FG,
+                                   activebackground=self.RED)
         else:
             self.run_btn.configure(text="START", bg=self.GREEN, fg=self.BTN_FG,
                                    activebackground=self.GREEN)
