@@ -36,12 +36,13 @@ if __name__ == "__main__":
         case = client.get_case()
 
     # place a test order for the first tradable security
+
     first_tradeable_ticker = next(
         (k for k, v in portfolio.items() if v["is_tradeable"])
     )
     order = client.place_order(
         first_tradeable_ticker, OrderType.MARKET, 100, OrderAction.BUY
     )
-
     
     logging.info(f"Placed order: {json.dumps(order, indent=2)}")
+    print(client.get_limits())
