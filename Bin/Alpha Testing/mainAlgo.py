@@ -1,4 +1,4 @@
-from rit_client import RITClient
+from Bin.rit_client import RITClient
 
 ## Add functions here
 def spread(securities, ritClient: RITClient) -> bool:

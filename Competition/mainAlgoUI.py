@@ -1,7 +1,7 @@
 import threading
 import tkinter as tk
 from tkinter import font
-from rit_client import RITClient
+from Bin.rit_client import RITClient
 
 # ── PnL tracker ────────────────────────────────────────────────────────────────
 
