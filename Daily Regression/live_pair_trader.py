@@ -116,19 +116,31 @@ def place_market(client, ticker, action, quantity):
 
 
 def _flatten_all(client):
-    """Fetch current portfolio and close every non-zero position."""
+    """Cancel all open orders, then close every non-zero tradeable position."""
+    # Cancel first — otherwise pending orders fill after we flatten and re-open positions
+    try:
+        client.cancel_all_orders()
+        log.info("  Cancelled all open orders.")
+    except Exception as e:
+        log.error(f"  cancel_all_orders failed: {e}")
+
     portfolio = client.get_portfolio()
     closed_any = False
     for ticker, sec in portfolio.items():
+        if not sec.get("is_tradeable", False):
+            continue
         pos = round(float(sec.get("position", 0)))
+        log.info(f"  {ticker:>6s}  position={pos:>8d}")
         if pos > 0:
-            log.info(f"  FLATTEN LONG  {pos:>6d} {ticker}")
+            log.info(f"    → SELL {pos:>8d} {ticker}")
             place_market(client, ticker, OrderAction.SELL, pos)
             closed_any = True
         elif pos < 0:
-            log.info(f"  FLATTEN SHORT {abs(pos):>6d} {ticker}")
+            log.info(f"    → BUY  {abs(pos):>8d} {ticker}")
             place_market(client, ticker, OrderAction.BUY, abs(pos))
             closed_any = True
+        else:
+            log.info(f"    → nothing to do")
     if not closed_any:
         log.info("  Nothing to flatten.")
     return closed_any
