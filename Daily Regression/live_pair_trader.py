@@ -38,9 +38,10 @@ PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
 CAPITAL        = 40_000_000
 TRADE_FRACTION = 0.5
 
-LOOKBACK          = 40   # ticks used when refitting model
-RISK_LIMIT        = 3000  # flatten + pause if P&L drops RISK_LIMIT below baseline
-RISK_PAUSE_TICKS  = 5   # ticks to sit out after hitting the risk limit
+LOOKBACK          = 40      # ticks used when refitting model
+REFIT_EVERY       = 10      # refit model every N ticks when flat
+RISK_LIMIT        = 100_000 # flatten + pause if P&L drops RISK_LIMIT below peak (drawdown limit)
+RISK_PAUSE_TICKS  = 5       # ticks to sit out after hitting the risk limit
 
 LOOP_INTERVAL = settings.get("loop_interval", 1)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -116,22 +117,41 @@ def place_market(client, ticker, action, quantity):
 
 
 def _flatten_all(client):
-    """Fetch current portfolio and close every non-zero position."""
-    portfolio = client.get_portfolio()
-    closed_any = False
-    for ticker, sec in portfolio.items():
-        pos = round(float(sec.get("position", 0)))
-        if pos > 0:
-            log.info(f"  FLATTEN LONG  {pos:>6d} {ticker}")
-            place_market(client, ticker, OrderAction.SELL, pos)
-            closed_any = True
-        elif pos < 0:
-            log.info(f"  FLATTEN SHORT {abs(pos):>6d} {ticker}")
-            place_market(client, ticker, OrderAction.BUY, abs(pos))
-            closed_any = True
-    if not closed_any:
-        log.info("  Nothing to flatten.")
-    return closed_any
+    """Cancel all open orders, then close every non-zero tradeable position."""
+    # Cancel first — otherwise pending orders fill after we flatten and re-open positions
+    try:
+        client.cancel_all_orders()
+        log.info("  Cancelled all open orders.")
+    except Exception as e:
+        log.error(f"  cancel_all_orders failed: {e}")
+
+    # Re-fetch real position each round and keep sending until everything is actually zero
+    for attempt in range(15):
+        portfolio  = client.get_portfolio()
+        still_open = False
+
+        for ticker, sec in portfolio.items():
+            if not sec.get("is_tradeable", False):
+                continue
+            pos = round(float(sec.get("position", 0)))
+            if pos == 0:
+                continue
+
+            still_open = True
+            action     = OrderAction.SELL if pos > 0 else OrderAction.BUY
+            max_chunk  = int(sec.get("max_trade_size", abs(pos))) or abs(pos)
+            chunk      = min(abs(pos), max_chunk)
+            log.info(f"  [{attempt+1}] {ticker:>6s}  pos={pos:>8d}  → {action.value} {chunk}")
+            place_market(client, ticker, action, chunk)
+
+        if not still_open:
+            log.info("  All positions flat.")
+            return True
+
+        time.sleep(0.3)   # wait for orders to fill before re-checking
+
+    log.warning("  Could not fully flatten after 15 attempts — residual positions may remain.")
+    return False
 
 
 def run():
@@ -202,6 +222,7 @@ def run():
     tick_count   = 0
     peak_pnl       = 0.0   # high-water mark — risk limit trails this upward
     paused_until   = 0     # tick number at which trading resumes after a risk pause
+    needs_refit    = False  # set True after risk pause; cleared after refit fires
 
     log.info(f"Starting loop — {security2}/{security1}  "
              f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}  "
@@ -268,6 +289,7 @@ def run():
                 tot_sec2 = 0; tot_sec1 = 0; in_position = False
                 peak_pnl     = total_pnl   # reset peak after trigger so next limit is from here
                 paused_until = tick_count + RISK_PAUSE_TICKS
+                needs_refit  = True
 
             # ── Pause check ───────────────────────────────────────────────────
             if tick_count <= paused_until:
@@ -275,8 +297,10 @@ def run():
                 time.sleep(LOOP_INTERVAL)
                 continue
 
-            # ── Refit on first tick after pause ends ──────────────────────────
-            if tick_count == paused_until + 1 and paused_until > 0 and len(price1_buf) >= LOOKBACK:
+            # ── Refit: after risk pause OR every REFIT_EVERY ticks when flat ───
+            post_pause_refit = needs_refit and tick_count > paused_until
+            periodic_refit   = not in_position and tick_count % REFIT_EVERY == 0
+            if (post_pause_refit or periodic_refit) and len(price1_buf) >= LOOKBACK:
                 h1 = np.array(price1_buf[-LOOKBACK:])
                 h2 = np.array(price2_buf[-LOOKBACK:])
                 mdl       = LinearRegression(fit_intercept=True).fit(h1.reshape(-1, 1), h2)
@@ -285,8 +309,10 @@ def run():
                 res       = h2 - (coef * h1 + intercept)
                 sd        = float(res.std())
                 entry_thresh, exit_thresh = _calibrate_thresholds(res, sd)
-                spread = price2 - (coef * price1 + intercept)
-                log.info(f"  POST-PAUSE REFIT  coef={coef:.4f}  intercept={intercept:.4f}  SD={sd:.4f}  "
+                spread    = price2 - (coef * price1 + intercept)
+                needs_refit = False
+                reason    = "POST-PAUSE" if post_pause_refit else "PERIODIC"
+                log.info(f"  {reason} REFIT  coef={coef:.4f}  intercept={intercept:.4f}  SD={sd:.4f}  "
                          f"entry=±{entry_thresh:.4f}  exit=±{exit_thresh:.4f}")
 
             # ── Trading logic ─────────────────────────────────────────────────

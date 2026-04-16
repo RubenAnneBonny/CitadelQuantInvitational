@@ -37,6 +37,8 @@ from sklearn.linear_model import LinearRegression
 PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
 CAPITAL        = 20_000_000
 TRADE_FRACTION = 0.25
+LOOKBACK       = 40     # ticks used when refitting model
+REFIT_EVERY    = 5     # refit model every N ticks when flat
 
 LOOP_INTERVAL = settings.get("loop_interval", 1)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -112,22 +114,41 @@ def place_market(client, ticker, action, quantity):
 
 
 def _flatten_all(client):
-    """Fetch current portfolio and close every non-zero position."""
-    portfolio = client.get_portfolio()
-    closed_any = False
-    for ticker, sec in portfolio.items():
-        pos = round(float(sec.get("position", 0)))
-        if pos > 0:
-            log.info(f"  FLATTEN LONG  {pos:>6d} {ticker}")
-            place_market(client, ticker, OrderAction.SELL, pos)
-            closed_any = True
-        elif pos < 0:
-            log.info(f"  FLATTEN SHORT {abs(pos):>6d} {ticker}")
-            place_market(client, ticker, OrderAction.BUY, abs(pos))
-            closed_any = True
-    if not closed_any:
-        log.info("  Nothing to flatten.")
-    return closed_any
+    """Cancel all open orders, then close every non-zero tradeable position."""
+    # Cancel first — otherwise pending orders fill after we flatten and re-open positions
+    try:
+        client.cancel_all_orders()
+        log.info("  Cancelled all open orders.")
+    except Exception as e:
+        log.error(f"  cancel_all_orders failed: {e}")
+
+    # Re-fetch real position each round and keep sending until everything is actually zero
+    for attempt in range(15):
+        portfolio  = client.get_portfolio()
+        still_open = False
+
+        for ticker, sec in portfolio.items():
+            if not sec.get("is_tradeable", False):
+                continue
+            pos = round(float(sec.get("position", 0)))
+            if pos == 0:
+                continue
+
+            still_open = True
+            action     = OrderAction.SELL if pos > 0 else OrderAction.BUY
+            max_chunk  = int(sec.get("max_trade_size", abs(pos))) or abs(pos)
+            chunk      = min(abs(pos), max_chunk)
+            log.info(f"  [{attempt+1}] {ticker:>6s}  pos={pos:>8d}  → {action.value} {chunk}")
+            place_market(client, ticker, action, chunk)
+
+        if not still_open:
+            log.info("  All positions flat.")
+            return True
+
+        time.sleep(0.3)   # wait for orders to fill before re-checking
+
+    log.warning("  Could not fully flatten after 15 attempts — residual positions may remain.")
+    return False
 
 
 def run():
@@ -189,6 +210,9 @@ def run():
     in_position = False
     tot_sec2    = 0
     tot_sec1    = 0
+    tick_count  = 0
+    price1_buf  = list(hist1)
+    price2_buf  = list(hist2)
 
     log.info(f"Starting loop — {security2}/{security1}  "
              f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}")
@@ -211,9 +235,12 @@ def run():
             portfolio = client.get_portfolio()
             price1    = portfolio[security1]["last"]
             price2    = portfolio[security2]["last"]
-            spread    = price2 - (coef * price1 + intercept)
+            tick_count += 1
 
-            bad = [391, 390, 389, 0, 1, 2]
+            price1_buf.append(price1)
+            price2_buf.append(price2)
+
+            bad = [391, 390, 389, 388, 0, 1, 2, 3]
 
             log.info(f"tick={curr['tick']}  "
                      f"{security1} pos={portfolio[security1]['position']}  "
@@ -228,6 +255,20 @@ def run():
                 tot_sec1    = 0
                 continue
 
+            # ── Periodic refit every REFIT_EVERY ticks ────────────────────────
+            if tick_count % REFIT_EVERY == 0 and len(price1_buf) >= LOOKBACK:
+                h1 = np.array(price1_buf[-LOOKBACK:])
+                h2 = np.array(price2_buf[-LOOKBACK:])
+                mdl       = LinearRegression(fit_intercept=True).fit(h1.reshape(-1, 1), h2)
+                coef      = float(mdl.coef_[0])
+                intercept = float(mdl.intercept_)
+                res       = h2 - (coef * h1 + intercept)
+                sd        = float(res.std())
+                entry_thresh, exit_thresh = _calibrate_thresholds(res, sd)
+                log.info(f"  PERIODIC REFIT  coef={coef:.4f}  intercept={intercept:.4f}  SD={sd:.4f}  "
+                         f"entry=±{entry_thresh:.4f}  exit=±{exit_thresh:.4f}")
+
+            spread = price2 - (coef * price1 + intercept)
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
                      f"spread={spread:+.4f}  (entry≥{entry_thresh:.4f}  exit≤{exit_thresh:.4f})")
 
