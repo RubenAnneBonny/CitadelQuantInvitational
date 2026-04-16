@@ -39,7 +39,7 @@ CAPITAL        = 1_000_000
 TRADE_FRACTION = 0.25
 
 LOOKBACK          = 40   # ticks used when refitting model
-RISK_LIMIT        = 300  # flatten + pause if P&L drops RISK_LIMIT below baseline
+RISK_LIMIT        = 3000  # flatten + pause if P&L drops RISK_LIMIT below baseline
 RISK_PAUSE_TICKS  = 5   # ticks to sit out after hitting the risk limit
 
 LOOP_INTERVAL = settings.get("loop_interval", 1)
@@ -199,7 +199,7 @@ def run():
     price1_buf   = list(hist1)
     price2_buf   = list(hist2)
     tick_count   = 0
-    risk_baseline  = 0.0   # P&L level the drawdown limit is measured from
+    peak_pnl       = 0.0   # high-water mark — risk limit trails this upward
     paused_until   = 0     # tick number at which trading resumes after a risk pause
 
     log.info(f"Starting loop — {security2}/{security1}  "
@@ -246,6 +246,8 @@ def run():
             # ── Total P&L (realized + unrealized) ─────────────────────────────
             unrealized = _realize_pnl(price1, price2)
             total_pnl  = session_pnl + unrealized
+            if total_pnl > peak_pnl:
+                peak_pnl = total_pnl   # high-water mark moves up with profits
 
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
                      f"spread={spread:+.4f}  "
@@ -253,14 +255,14 @@ def run():
                      f"PnL={total_pnl:+,.0f}  Sharpe={sharpe:+.4f}")
 
             # ── Risk check (only when in a position) ──────────────────────────
-            if in_position and (total_pnl - risk_baseline) < -RISK_LIMIT:
-                log.warning(f"RISK LIMIT HIT — drawdown {total_pnl - risk_baseline:+,.0f} "
+            if in_position and (total_pnl - peak_pnl) < -RISK_LIMIT:
+                log.warning(f"RISK LIMIT HIT — drawdown from peak {total_pnl - peak_pnl:+,.0f} "
                             f"< -{RISK_LIMIT:,.0f}. Flattening all positions and pausing {RISK_PAUSE_TICKS} ticks.")
                 session_pnl += _realize_pnl(price1, price2)
                 _flatten_all(client)   # fresh portfolio fetch, rounds positions correctly
                 tot_sec2 = 0; tot_sec1 = 0; in_position = False
-                risk_baseline = total_pnl   # reset — next limit measured from here
-                paused_until  = tick_count + RISK_PAUSE_TICKS
+                peak_pnl     = total_pnl   # reset peak after trigger so next limit is from here
+                paused_until = tick_count + RISK_PAUSE_TICKS
 
             # ── Pause check ───────────────────────────────────────────────────
             if tick_count <= paused_until:
