@@ -127,16 +127,21 @@ def _flatten_all(client):
             continue
         pos = round(float(sec.get("position", 0)))
         log.info(f"  {ticker:>6s}  position={pos:>8d}")
-        if pos > 0:
-            log.info(f"    → SELL {pos:>8d} {ticker}")
-            place_market(client, ticker, OrderAction.SELL, pos)
-            closed_any = True
-        elif pos < 0:
-            log.info(f"    → BUY  {abs(pos):>8d} {ticker}")
-            place_market(client, ticker, OrderAction.BUY, abs(pos))
-            closed_any = True
-        else:
+        if pos == 0:
             log.info(f"    → nothing to do")
+            continue
+
+        action    = OrderAction.SELL if pos > 0 else OrderAction.BUY
+        max_chunk = int(sec.get("max_trade_size", abs(pos))) or abs(pos)
+        remaining = abs(pos)
+        log.info(f"    → {action.value} {remaining:>8d} {ticker}  (max_trade_size={max_chunk})")
+
+        while remaining > 0:
+            chunk = min(remaining, max_chunk)
+            place_market(client, ticker, action, chunk)
+            remaining -= chunk
+
+        closed_any = True
     if not closed_any:
         log.info("  Nothing to flatten.")
     return closed_any
