@@ -236,8 +236,8 @@ def run():
                      f"(entry≥±{entry_thresh:.6f}  exit≤±{exit_thresh:.6f})  "
                      f"PnL={total_pnl:+,.0f}  Sharpe={sharpe:+.4f}")
 
-            # ── Risk check ────────────────────────────────────────────────────
-            if (total_pnl - risk_baseline) < -RISK_LIMIT and tick_count > paused_until:
+            # ── Risk check (only fires when in a position) ────────────────────
+            if in_position and (total_pnl - risk_baseline) < -RISK_LIMIT and tick_count > paused_until:
                 log.warning(f"RISK LIMIT HIT — P&L change {total_pnl - risk_baseline:+,.0f} "
                             f"< -{RISK_LIMIT:,.0f}. Flattening and pausing {RISK_PAUSE_TICKS} ticks.")
                 if in_position:
@@ -253,8 +253,9 @@ def run():
                 time.sleep(LOOP_INTERVAL)
                 continue
 
-            # ── Periodic refit ────────────────────────────────────────────────
-            if tick_count % REFIT_EVERY == 0 and len(price1_buf) >= LOOKBACK:
+            # ── Periodic refit (only when flat — refitting mid-position changes
+            #    the spread reference and causes spurious exits) ───────────────
+            if not in_position and tick_count % REFIT_EVERY == 0 and len(price1_buf) >= LOOKBACK:
                 h1    = np.array(price1_buf[-LOOKBACK:])
                 h2    = np.array(price2_buf[-LOOKBACK:])
                 ratio = float(np.mean(h2 / h1))

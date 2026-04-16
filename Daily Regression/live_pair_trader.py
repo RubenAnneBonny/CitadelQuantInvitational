@@ -34,14 +34,14 @@ from settings import settings
 from sklearn.linear_model import LinearRegression
 
 # ── Config ────────────────────────────────────────────────────────────────────
+PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
 PAIR_RANK      = 1          # 1 = best pair by avg R², 2 = second best, etc.
-CAPITAL        = 10_000_000
+CAPITAL        = 1_000_000
 TRADE_FRACTION = 0.25
 
-LOOKBACK          = 40      # ticks used to refit model and calibrate thresholds
-REFIT_EVERY       = 10      # refit every N ticks
-RISK_LIMIT        = 300     # flatten and pause if total P&L drops below −RISK_LIMIT
-RISK_PAUSE_TICKS  = 3      # ticks to sit out after hitting the risk limit
+LOOKBACK       = 40         # ticks used to refit model and calibrate thresholds
+REFIT_EVERY    = 10         # refit every N ticks
+RISK_LIMIT     = 300        # stop trading if total P&L drops below −RISK_LIMIT
 
 LOOP_INTERVAL = settings.get("loop_interval", 1)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,6 +183,10 @@ def run():
     log.info(f"Entry at spread ≥ ±{entry_thresh:.4f}  |  Exit at ≤ ±{exit_thresh:.4f}")
 
     # ── Step 4: trade ─────────────────────────────────────────────────────────
+    in_position = False
+    tot_sec2    = 0
+    tot_sec1    = 0
+    pnl_history = []   # mark-to-market value each tick
     in_position  = False
     tot_sec2     = 0
     tot_sec1     = 0
@@ -192,11 +196,10 @@ def run():
     pnl_history  = []      # MTM tick series for Sharpe
     price1_buf   = list(hist1)
     price2_buf   = list(hist2)
-    tick_count      = 0
-    paused_until    = 0    # tick number at which trading resumes after a risk pause
-    risk_baseline   = 0.0  # total_pnl at the last risk reset — limit is measured from here
+    tick_count   = 0
 
     log.info(f"Starting loop — {security2}/{security1}  "
+             f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}"
              f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}  "
              f"risk_limit={RISK_LIMIT:,.0f}")
 
@@ -218,6 +221,10 @@ def run():
             continue
 
         try:
+            portfolio = client.get_portfolio()
+            price1    = portfolio[security1]["last"]
+            price2    = portfolio[security2]["last"]
+            spread    = price2 - (coef * price1 + intercept)
             portfolio  = client.get_portfolio()
             price1     = portfolio[security1]["last"]
             price2     = portfolio[security2]["last"]
@@ -243,25 +250,19 @@ def run():
 
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
                      f"spread={spread:+.4f}  "
+                     f"(entry≥{entry_thresh:.4f}  exit≤{exit_thresh:.4f})  "
+                     f"Sharpe={sharpe:+.4f}"
                      f"(entry≥±{entry_thresh:.4f}  exit≤±{exit_thresh:.4f})  "
                      f"PnL={total_pnl:+,.0f}  Sharpe={sharpe:+.4f}")
 
             # ── Risk check ────────────────────────────────────────────────────
-            if (total_pnl - risk_baseline) < -RISK_LIMIT and tick_count > paused_until:
-                log.warning(f"RISK LIMIT HIT — P&L change {total_pnl - risk_baseline:+,.0f} "
-                            f"< -{RISK_LIMIT:,.0f}. Flattening and pausing {RISK_PAUSE_TICKS} ticks.")
+            if total_pnl < -RISK_LIMIT:
+                log.warning(f"RISK LIMIT HIT — P&L {total_pnl:+,.0f} < -{RISK_LIMIT:,.0f}. "
+                            f"Flattening all positions.")
                 if in_position:
                     place_market(client, security2, OrderAction.BUY  if tot_sec2 < 0 else OrderAction.SELL, abs(tot_sec2))
                     place_market(client, security1, OrderAction.SELL if tot_sec1 > 0 else OrderAction.BUY,  abs(tot_sec1))
-                    session_pnl += _realize_pnl(price1, price2)
-                    tot_sec2 = 0; tot_sec1 = 0; in_position = False
-                risk_baseline = total_pnl   # reset — next limit measured from here
-                paused_until  = tick_count + RISK_PAUSE_TICKS
-
-            if tick_count <= paused_until:
-                log.info(f"  PAUSED — resuming in {paused_until - tick_count} ticks")
-                time.sleep(LOOP_INTERVAL)
-                continue
+                break
 
             # ── Periodic refit ────────────────────────────────────────────────
             if tick_count % REFIT_EVERY == 0 and len(price1_buf) >= LOOKBACK:
@@ -284,58 +285,84 @@ def run():
 
             if not in_position:
                 if spread >= entry_thresh:
+                    # Spread too high — short security2, long security1
                     log.info(f"ENTRY SHORT — sell {security2} ({qty2}), buy {security1} ({qty1})")
                     place_market(client, security2, OrderAction.SELL, qty2)
                     place_market(client, security1, OrderAction.BUY,  qty1)
+                    tot_sec2    = -qty2
+                    tot_sec1    =  qty1
                     tot_sec2 = -qty2; tot_sec1 = qty1
                     entry_price1 = price1; entry_price2 = price2
                     in_position = True
 
                 elif spread <= -entry_thresh:
+                    # Spread too low — long security2, short security1
                     log.info(f"ENTRY LONG  — buy {security2} ({qty2}), sell {security1} ({qty1})")
                     place_market(client, security2, OrderAction.BUY,  qty2)
                     place_market(client, security1, OrderAction.SELL, qty1)
+                    tot_sec2    =  qty2
+                    tot_sec1    = -qty1
                     tot_sec2 = qty2; tot_sec1 = -qty1
                     entry_price1 = price1; entry_price2 = price2
                     in_position = True
 
             elif in_position:
                 if tot_sec2 < 0:
+                    # Currently SHORT spread (short sec2, long sec1)
+                    if spread <= exit_thresh:
+                        log.info("EXIT SHORT — closing position")
                     # SHORT spread — flip checked first (more extreme than exit)
                     if spread <= -entry_thresh:
                         log.info(f"FLIP SHORT→LONG — {security2} ({abs(tot_sec2)}→{qty2})")
                         session_pnl += _realize_pnl(price1, price2)
                         place_market(client, security2, OrderAction.BUY,  abs(tot_sec2))
                         place_market(client, security1, OrderAction.SELL, abs(tot_sec1))
+                        tot_sec2 = 0; tot_sec1 = 0; in_position = False
                         place_market(client, security2, OrderAction.BUY,  qty2)
                         place_market(client, security1, OrderAction.SELL, qty1)
                         tot_sec2 = qty2; tot_sec1 = -qty1
                         entry_price1 = price1; entry_price2 = price2
 
+                    elif spread <= -entry_thresh:
+                        # Spread flipped to the other extreme — reverse directly
+                        log.info(f"FLIP SHORT→LONG — close short, open long  {security2} ({abs(tot_sec2)}→{qty2})")
                     elif spread <= exit_thresh:
                         log.info("EXIT SHORT — closing position")
                         session_pnl += _realize_pnl(price1, price2)
                         place_market(client, security2, OrderAction.BUY,  abs(tot_sec2))
                         place_market(client, security1, OrderAction.SELL, abs(tot_sec1))
+                        place_market(client, security2, OrderAction.BUY,  qty2)
+                        place_market(client, security1, OrderAction.SELL, qty1)
+                        tot_sec2 =  qty2; tot_sec1 = -qty1
                         tot_sec2 = 0; tot_sec1 = 0; in_position = False
 
                 elif tot_sec2 > 0:
+                    # Currently LONG spread (long sec2, short sec1)
+                    if spread >= -exit_thresh:
+                        log.info("EXIT LONG  — closing position")
                     # LONG spread — flip checked first (more extreme than exit)
                     if spread >= entry_thresh:
                         log.info(f"FLIP LONG→SHORT — {security2} ({abs(tot_sec2)}→{qty2})")
                         session_pnl += _realize_pnl(price1, price2)
                         place_market(client, security2, OrderAction.SELL, abs(tot_sec2))
                         place_market(client, security1, OrderAction.BUY,  abs(tot_sec1))
+                        tot_sec2 = 0; tot_sec1 = 0; in_position = False
                         place_market(client, security2, OrderAction.SELL, qty2)
                         place_market(client, security1, OrderAction.BUY,  qty1)
                         tot_sec2 = -qty2; tot_sec1 = qty1
                         entry_price1 = price1; entry_price2 = price2
 
+                    elif spread >= entry_thresh:
+                        # Spread flipped to the other extreme — reverse directly
+                        log.info(f"FLIP LONG→SHORT — close long, open short  {security2} ({abs(tot_sec2)}→{qty2})")
                     elif spread >= -exit_thresh:
                         log.info("EXIT LONG  — closing position")
                         session_pnl += _realize_pnl(price1, price2)
                         place_market(client, security2, OrderAction.SELL, abs(tot_sec2))
                         place_market(client, security1, OrderAction.BUY,  abs(tot_sec1))
+                        place_market(client, security2, OrderAction.SELL, qty2)
+                        place_market(client, security1, OrderAction.BUY,  qty1)
+                        tot_sec2 = -qty2; tot_sec1 =  qty1
                         tot_sec2 = 0; tot_sec1 = 0; in_position = False
 
         except Exception as e:
@@ -346,10 +373,13 @@ def run():
     # ── Market closed ─────────────────────────────────────────────────────────
     log.info(f"Session ended — realized P&L: {session_pnl:+,.0f}")
     if in_position:
+        log.info("Market closed — closing open position.")
         log.info("Closing open position.")
         portfolio = client.get_portfolio()
         price1    = portfolio[security1]["last"]
         price2    = portfolio[security2]["last"]
+        place_market(client, security2, OrderAction.BUY,  abs(tot_sec2))
+        place_market(client, security1, OrderAction.SELL, abs(tot_sec1))
         place_market(client, security2, OrderAction.BUY  if tot_sec2 < 0 else OrderAction.SELL, abs(tot_sec2))
         place_market(client, security1, OrderAction.SELL if tot_sec1 > 0 else OrderAction.BUY,  abs(tot_sec1))
 
