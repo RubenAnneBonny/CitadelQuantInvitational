@@ -18,7 +18,6 @@ import time
 import logging
 import requests
 import numpy as np
-import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _HERE   = os.path.dirname(os.path.abspath(__file__))
@@ -27,17 +26,14 @@ sys.path.insert(0, _HERE)
 sys.path.insert(0, _ROTMAN)
 
 from daily_pair_regression_pct  import run as get_daily_pairs
-from threshold_optimizer_pct    import find_best_thresholds_pct
 from RotmanInteractiveTraderApi import RotmanInteractiveTraderApi, OrderType, OrderAction
 from settings import settings
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
-TRAIN_DAYS     = 30
 CAPITAL        = 1_000_000
 TRADE_FRACTION = 0.25
 
-DATA_FILE     = os.path.join(_HERE, "../Competition/Alpha Testing V2/data.csv")
 LOOP_INTERVAL = settings.get("loop_interval", 1)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -47,6 +43,58 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+
+def _calibrate_thresholds(spread_arr, sd, grid_steps=25):
+    """
+    Grid-search (entry, exit) thresholds directly on a live spread array.
+    Tries multipliers in [0.1, 4.0] × SD, both long and short sides.
+    Returns (entry_thresh, exit_thresh).
+    """
+    if sd == 0:
+        return 0.005, 0.001
+
+    mults = np.linspace(0.1, 4.0, grid_steps)
+    best_sharpe = -np.inf
+    best_entry  = sd * 1.0
+    best_exit   = sd * 0.3
+
+    for em in mults:
+        for xm in mults:
+            if xm >= em:
+                continue
+            entry = em * sd
+            exit_ = xm * sd
+
+            in_pos    = 0   # 0=flat, +1=long spread, -1=short spread
+            entry_val = 0.0
+            trades    = []
+
+            for s in spread_arr:
+                if in_pos == 0:
+                    if s >= entry:
+                        in_pos = -1; entry_val = s
+                    elif s <= -entry:
+                        in_pos = +1; entry_val = s
+                elif in_pos == -1 and s <= exit_:
+                    trades.append(entry_val - s)
+                    in_pos = 0
+                elif in_pos == +1 and s >= -exit_:
+                    trades.append(s - entry_val)
+                    in_pos = 0
+
+            if len(trades) < 2:
+                continue
+            t  = np.array(trades)
+            sh = t.mean() / (t.std() + 1e-9)
+            if sh > best_sharpe:
+                best_sharpe = sh
+                best_entry  = entry
+                best_exit   = exit_
+
+    log.info(f"Live calibration: entry={best_entry:.6f}  exit={best_exit:.6f}  "
+             f"Sharpe={best_sharpe:.4f}")
+    return best_entry, best_exit
 
 
 def place_market(client, ticker, action, quantity):
@@ -75,16 +123,7 @@ def run():
     log.info(f"Selected pair #{PAIR_RANK}: {security1}/{security2}  "
              f"avg R²={chosen['r2']:.4f}  ratio={ratio:.6f}")
 
-    # ── Step 2: find best multipliers from CSV data ───────────────────────────
-    log.info("Optimising thresholds on CSV data...")
-    df = pd.read_csv(DATA_FILE)
-    buy_in, back, _, best_sharpe = find_best_thresholds_pct(
-        df, security1, security2, ratio, train_days=TRAIN_DAYS
-    )
-    log.info(f"Best multipliers from CSV:  buy_in={buy_in:.4f}  back={back:.4f}  "
-             f"Sharpe={best_sharpe:.4f}")
-
-    # ── Step 3: connect and refit ratio from live server history ──────────────
+    # ── Step 2: connect and wait for market to open ───────────────────────────
     client = RotmanInteractiveTraderApi(
         api_key=settings["api_key"],
         api_host=settings["api_host"],
@@ -101,16 +140,17 @@ def run():
         time.sleep(1)
     log.info("Market is open.")
 
-    log.info("Fetching live history to refit ratio and SD...")
-    hist1   = np.array([e["close"] for e in client.get_history(security1)])
-    hist2   = np.array([e["close"] for e in client.get_history(security2)])
-    ratio   = float(np.mean(hist2 / hist1))
-    sd      = float(np.std(hist2 / hist1 - ratio))
-
-    entry_thresh = buy_in * sd
-    exit_thresh  = back   * sd
+    # ── Step 3: refit ratio from live history + calibrate thresholds ──────────
+    log.info("Fetching live history to refit ratio and calibrate thresholds...")
+    hist1 = np.array([e["close"] for e in client.get_history(security1)])
+    hist2 = np.array([e["close"] for e in client.get_history(security2)])
+    ratio = float(np.mean(hist2 / hist1))
+    sd    = float(np.std(hist2 / hist1 - ratio))
 
     log.info(f"Live fit:  {security2}/{security1} ratio={ratio:.6f}  SD={sd:.6f}")
+
+    live_spread  = hist2 / hist1 - ratio
+    entry_thresh, exit_thresh = _calibrate_thresholds(live_spread, sd)
     log.info(f"Entry at ratio spread ≥ ±{entry_thresh:.6f}  |  Exit at ≤ ±{exit_thresh:.6f}")
 
     # ── Step 4: trade ─────────────────────────────────────────────────────────
