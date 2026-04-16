@@ -183,6 +183,7 @@ def run():
     log.info(f"Entry at spread ≥ ±{entry_thresh:.4f}  |  Exit at ≤ ±{exit_thresh:.4f}")
 
     # ── Step 4: trade ─────────────────────────────────────────────────────────
+    # Hej
     in_position = False
     tot_sec2    = 0
     tot_sec1    = 0
