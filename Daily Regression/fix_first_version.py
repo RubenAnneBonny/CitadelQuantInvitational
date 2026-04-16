@@ -188,6 +188,8 @@ def run():
             bad = [391, 390, 389, 0, 1, 2]
 
             log.info(curr["tick"])
+            log.info(security1, portfolio[security1]["position"])
+            log.info(security2, portfolio[security2]["position"])
 
             if curr["tick"] in bad:
 
