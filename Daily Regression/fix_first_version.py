@@ -37,6 +37,8 @@ from sklearn.linear_model import LinearRegression
 PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
 CAPITAL        = 20_000_000
 TRADE_FRACTION = 0.25
+LOOKBACK       = 40     # ticks used when refitting model
+REFIT_EVERY    = 10     # refit model every N ticks when flat
 
 LOOP_INTERVAL = settings.get("loop_interval", 1)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,6 +210,9 @@ def run():
     in_position = False
     tot_sec2    = 0
     tot_sec1    = 0
+    tick_count  = 0
+    price1_buf  = list(hist1)
+    price2_buf  = list(hist2)
 
     log.info(f"Starting loop — {security2}/{security1}  "
              f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}")
@@ -230,7 +235,10 @@ def run():
             portfolio = client.get_portfolio()
             price1    = portfolio[security1]["last"]
             price2    = portfolio[security2]["last"]
-            spread    = price2 - (coef * price1 + intercept)
+            tick_count += 1
+
+            price1_buf.append(price1)
+            price2_buf.append(price2)
 
             bad = [391, 390, 389, 0, 1, 2]
 
@@ -247,6 +255,20 @@ def run():
                 tot_sec1    = 0
                 continue
 
+            # ── Periodic refit every REFIT_EVERY ticks when flat ──────────────
+            if not in_position and tick_count % REFIT_EVERY == 0 and len(price1_buf) >= LOOKBACK:
+                h1 = np.array(price1_buf[-LOOKBACK:])
+                h2 = np.array(price2_buf[-LOOKBACK:])
+                mdl       = LinearRegression(fit_intercept=True).fit(h1.reshape(-1, 1), h2)
+                coef      = float(mdl.coef_[0])
+                intercept = float(mdl.intercept_)
+                res       = h2 - (coef * h1 + intercept)
+                sd        = float(res.std())
+                entry_thresh, exit_thresh = _calibrate_thresholds(res, sd)
+                log.info(f"  PERIODIC REFIT  coef={coef:.4f}  intercept={intercept:.4f}  SD={sd:.4f}  "
+                         f"entry=±{entry_thresh:.4f}  exit=±{exit_thresh:.4f}")
+
+            spread = price2 - (coef * price1 + intercept)
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
                      f"spread={spread:+.4f}  (entry≥{entry_thresh:.4f}  exit≤{exit_thresh:.4f})")
 
