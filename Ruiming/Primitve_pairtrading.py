@@ -44,8 +44,8 @@ if __name__ == "__main__":
     intercept,coef=95.46931822547003,1.05311287
     sd=4.31792969543484
 
-    buy_in=1.0357142857142856
-    back=0.9142857142857143
+    buy_in=1.2222222222222223
+    back=0.9444444444444444
 
     security1="ETF"
     security2="BBB"
@@ -67,7 +67,7 @@ if __name__ == "__main__":
         ETF_MAX=max(ETF_MAX,porto[security2]["last"])
         ETF_MIN=min(ETF_MIN,porto[security2]["last"])
 
-        print(diff,buy_in*sd,back*sd)
+        #print(diff,buy_in*sd,back*sd)
 
         #when diff high positiv
         if(diff>=buy_in*sd and not bought):
@@ -90,7 +90,8 @@ if __name__ == "__main__":
             bought=1
 
         #when diff high negative
-        if(diff<=buy_in*sd and not bought):
+        """
+        if(-diff<=buy_in*sd and not bought):
             ETF_MAX=porto[security2]["last"]
             ETF_MIN=porto[security2]["last"]
             amount_etf=total//2//porto[security2]["ask"]
@@ -107,9 +108,10 @@ if __name__ == "__main__":
                 "IND", OrderType.MARKET, amount_ind, OrderAction.SELL
             )
 
-            bought=1
+            bought=1"""
 
-        print(ETF_MAX,ETF_MIN,abs(diff),back*sd)
+        #print(ETF_MAX,ETF_MIN,abs(diff),back*sd)
+        
         #when going back
         if bought:
             if tot_ETF>0:
@@ -135,6 +137,7 @@ if __name__ == "__main__":
                     tot_IND=0
 
                     bought=False
+                    """
             else:
                 if((abs(diff)<=back*sd or abs(1-porto["ETF"]["last"]/ETF_MIN)>0.05)):
                     if(tot_ETF>0):
@@ -158,7 +161,7 @@ if __name__ == "__main__":
                     tot_IND=0
 
                     bought=False
-
+    """
     #Risk management as well
     """
     # place a test order for the first tradable security
