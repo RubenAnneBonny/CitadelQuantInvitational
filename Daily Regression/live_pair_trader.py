@@ -38,9 +38,9 @@ PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
 CAPITAL        = 40_000_000
 TRADE_FRACTION = 0.5
 
-LOOKBACK          = 40   # ticks used when refitting model
-RISK_LIMIT        = 3000  # flatten + pause if P&L drops RISK_LIMIT below baseline
-RISK_PAUSE_TICKS  = 5   # ticks to sit out after hitting the risk limit
+LOOKBACK          = 40      # ticks used when refitting model
+RISK_LIMIT        = 100_000 # flatten + pause if P&L drops RISK_LIMIT below peak (drawdown limit)
+RISK_PAUSE_TICKS  = 5       # ticks to sit out after hitting the risk limit
 
 LOOP_INTERVAL = settings.get("loop_interval", 1)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -221,6 +221,7 @@ def run():
     tick_count   = 0
     peak_pnl       = 0.0   # high-water mark — risk limit trails this upward
     paused_until   = 0     # tick number at which trading resumes after a risk pause
+    needs_refit    = False  # set True after risk pause; cleared after refit fires
 
     log.info(f"Starting loop — {security2}/{security1}  "
              f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}  "
@@ -287,6 +288,7 @@ def run():
                 tot_sec2 = 0; tot_sec1 = 0; in_position = False
                 peak_pnl     = total_pnl   # reset peak after trigger so next limit is from here
                 paused_until = tick_count + RISK_PAUSE_TICKS
+                needs_refit  = True
 
             # ── Pause check ───────────────────────────────────────────────────
             if tick_count <= paused_until:
@@ -295,7 +297,7 @@ def run():
                 continue
 
             # ── Refit on first tick after pause ends ──────────────────────────
-            if tick_count == paused_until + 1 and paused_until > 0 and len(price1_buf) >= LOOKBACK:
+            if needs_refit and tick_count > paused_until and len(price1_buf) >= LOOKBACK:
                 h1 = np.array(price1_buf[-LOOKBACK:])
                 h2 = np.array(price2_buf[-LOOKBACK:])
                 mdl       = LinearRegression(fit_intercept=True).fit(h1.reshape(-1, 1), h2)
@@ -305,6 +307,7 @@ def run():
                 sd        = float(res.std())
                 entry_thresh, exit_thresh = _calibrate_thresholds(res, sd)
                 spread = price2 - (coef * price1 + intercept)
+                needs_refit = False
                 log.info(f"  POST-PAUSE REFIT  coef={coef:.4f}  intercept={intercept:.4f}  SD={sd:.4f}  "
                          f"entry=±{entry_thresh:.4f}  exit=±{exit_thresh:.4f}")
 
