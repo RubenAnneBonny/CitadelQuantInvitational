@@ -35,7 +35,7 @@ from sklearn.linear_model import LinearRegression
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
-CAPITAL        = 1_000_000
+CAPITAL        = 20_000_000
 TRADE_FRACTION = 0.25
 
 LOOP_INTERVAL = settings.get("loop_interval", 1)
