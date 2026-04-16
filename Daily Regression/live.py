@@ -35,8 +35,8 @@ from sklearn.linear_model import LinearRegression
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
-CAPITAL        = 10_000_000
-TRADE_FRACTION = 0.25
+CAPITAL        = 40_000_000
+TRADE_FRACTION = 0.5
 
 LOOKBACK       = 50         # ticks used to refit model and calibrate thresholds
 REFIT_EVERY    = 10         # refit every N ticks

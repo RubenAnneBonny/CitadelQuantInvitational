@@ -35,8 +35,8 @@ from sklearn.linear_model import LinearRegression
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
-CAPITAL        = 10_000_000
-TRADE_FRACTION = 0.25
+CAPITAL        = 40_000_000
+TRADE_FRACTION = 0.5
 
 LOOKBACK          = 40   # ticks used when refitting model
 RISK_LIMIT        = 3000  # flatten + pause if P&L drops RISK_LIMIT below baseline
@@ -160,9 +160,10 @@ def run():
     log.info("Waiting for market to open...")
     while True:
         try:
-            if client.is_market_open():
+            status = client.get_case()["status"]
+            if status == "ACTIVE":
                 break
-            log.info("Market not open yet, retrying...")
+            log.info(f"Market status: {status} — waiting...")
         except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout):
             log.warning("Connection error, retrying...")
         time.sleep(1)
@@ -216,8 +217,12 @@ def run():
 
     while True:
         try:
-            if not client.is_market_open():
+            status = client.get_case()["status"]
+            if status == "STOPPED":
                 break
+            if status == "PAUSED":
+                time.sleep(LOOP_INTERVAL)
+                continue
         except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout):
             log.warning("Connection error checking market status, continuing...")
             time.sleep(LOOP_INTERVAL)
