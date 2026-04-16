@@ -75,21 +75,16 @@ def run():
     log.info(f"Selected pair #{PAIR_RANK}: {security1}/{security2}  "
              f"avg R²={chosen['r2']:.4f}  ratio={ratio:.6f}")
 
-    # ── Step 2: find best thresholds ──────────────────────────────────────────
-    log.info("Optimising thresholds...")
+    # ── Step 2: find best multipliers from CSV data ───────────────────────────
+    log.info("Optimising thresholds on CSV data...")
     df = pd.read_csv(DATA_FILE)
-    buy_in, back, sd, best_sharpe = find_best_thresholds_pct(
+    buy_in, back, _, best_sharpe = find_best_thresholds_pct(
         df, security1, security2, ratio, train_days=TRAIN_DAYS
     )
+    log.info(f"Best multipliers from CSV:  buy_in={buy_in:.4f}  back={back:.4f}  "
+             f"Sharpe={best_sharpe:.4f}")
 
-    entry_thresh = buy_in * sd
-    exit_thresh  = back   * sd
-
-    log.info(f"Best thresholds:  buy_in={buy_in:.4f}  back={back:.4f}  "
-             f"SD={sd:.6f}  Sharpe={best_sharpe:.4f}")
-    log.info(f"Entry at ratio spread ≥ ±{entry_thresh:.6f}  |  Exit at ≤ ±{exit_thresh:.6f}")
-
-    # ── Step 3: connect to Rotman ─────────────────────────────────────────────
+    # ── Step 3: connect and refit ratio from live server history ──────────────
     client = RotmanInteractiveTraderApi(
         api_key=settings["api_key"],
         api_host=settings["api_host"],
@@ -105,6 +100,18 @@ def run():
             log.warning("Connection error, retrying...")
         time.sleep(1)
     log.info("Market is open.")
+
+    log.info("Fetching live history to refit ratio and SD...")
+    hist1   = np.array([e["close"] for e in client.get_history(security1)])
+    hist2   = np.array([e["close"] for e in client.get_history(security2)])
+    ratio   = float(np.mean(hist2 / hist1))
+    sd      = float(np.std(hist2 / hist1 - ratio))
+
+    entry_thresh = buy_in * sd
+    exit_thresh  = back   * sd
+
+    log.info(f"Live fit:  {security2}/{security1} ratio={ratio:.6f}  SD={sd:.6f}")
+    log.info(f"Entry at ratio spread ≥ ±{entry_thresh:.6f}  |  Exit at ≤ ±{exit_thresh:.6f}")
 
     # ── Step 4: trade ─────────────────────────────────────────────────────────
     in_position = False
