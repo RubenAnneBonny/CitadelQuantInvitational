@@ -56,7 +56,8 @@ if __name__ == "__main__":
     y_fit=porto["IND"]["last"]*coef+intercept
     #print(y_fit-porto["ETF"]["last"])
 
-    ETF_MAX=0
+    ETF_MAX=256.70
+    ETF_MIN=256.70
     
     while(case["status"]=="ACTIVE"):
         porto=dict(portfolio.items())
@@ -64,6 +65,7 @@ if __name__ == "__main__":
         diff=y_fit-porto["ETF"]["last"]
 
         ETF_MAX=max(ETF_MAX,porto["ETF"]["last"])
+        ETF_MIN=min(ETF_MIN)
 
         #when diff high positiv
         if(diff>=buy_in*sd and not bought):
@@ -101,28 +103,53 @@ if __name__ == "__main__":
             bought=1
 
         #when going back
-        if((abs(diff)<=back*sd or abs(1-porto["ETF"]["last"]/ETF_MAX)>0.05) and bought):
-            if(tot_ETF>0):
-                client.place_order(
-                    "ETF", OrderType.MARKET, tot_ETF, OrderAction.SELL
-                )
-            else:
-                client.place_order(
-                    "ETF", OrderType.MARKET, tot_ETF, OrderAction.BUY
-                )
+        if bought:
+            if tot_ETF>0:
+                if((abs(diff)<=back*sd or abs(1-porto["ETF"]["last"]/ETF_MAX)>0.05)):
+                    if(tot_ETF>0):
+                        client.place_order(
+                            "ETF", OrderType.MARKET, tot_ETF, OrderAction.SELL
+                        )
+                    else:
+                        client.place_order(
+                            "ETF", OrderType.MARKET, tot_ETF, OrderAction.BUY
+                        )
 
-            if(tot_IND>0):
-                client.place_order(
-                    "IND", OrderType.MARKET, tot_IND, OrderAction.SELL
-                )
-            else:
-                client.place_order(
-                    "IND", OrderType.MARKET, tot_IND, OrderAction.BUY
-                )
-            tot_ETF=0
-            tot_IND=0
+                    if(tot_IND>0):
+                        client.place_order(
+                            "IND", OrderType.MARKET, tot_IND, OrderAction.SELL
+                        )
+                    else:
+                        client.place_order(
+                            "IND", OrderType.MARKET, tot_IND, OrderAction.BUY
+                        )
+                    tot_ETF=0
+                    tot_IND=0
 
-            bought=False
+                    bought=False
+            else:
+                if((abs(diff)<=back*sd or abs(1-porto["ETF"]["last"]/ETF_MIN)>0.05)):
+                    if(tot_ETF>0):
+                        client.place_order(
+                            "ETF", OrderType.MARKET, tot_ETF, OrderAction.SELL
+                        )
+                    else:
+                        client.place_order(
+                            "ETF", OrderType.MARKET, tot_ETF, OrderAction.BUY
+                        )
+
+                    if(tot_IND>0):
+                        client.place_order(
+                            "IND", OrderType.MARKET, tot_IND, OrderAction.SELL
+                        )
+                    else:
+                        client.place_order(
+                            "IND", OrderType.MARKET, tot_IND, OrderAction.BUY
+                        )
+                    tot_ETF=0
+                    tot_IND=0
+
+                    bought=False
 
     #Risk management as well
     """
