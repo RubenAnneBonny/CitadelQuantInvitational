@@ -115,6 +115,25 @@ def place_market(client, ticker, action, quantity):
         log.error(f"  ORDER FAILED  {action.value} {quantity} {ticker}: {e}")
 
 
+def _flatten_all(client):
+    """Fetch current portfolio and close every non-zero position."""
+    portfolio = client.get_portfolio()
+    closed_any = False
+    for ticker, sec in portfolio.items():
+        pos = round(float(sec.get("position", 0)))
+        if pos > 0:
+            log.info(f"  FLATTEN LONG  {pos:>6d} {ticker}")
+            place_market(client, ticker, OrderAction.SELL, pos)
+            closed_any = True
+        elif pos < 0:
+            log.info(f"  FLATTEN SHORT {abs(pos):>6d} {ticker}")
+            place_market(client, ticker, OrderAction.BUY, abs(pos))
+            closed_any = True
+    if not closed_any:
+        log.info("  Nothing to flatten.")
+    return closed_any
+
+
 def run():
     # ── Step 1: pick pair from daily regression ───────────────────────────────
     log.info(f"Running daily pair regression — picking rank #{PAIR_RANK}...")
@@ -150,20 +169,8 @@ def run():
     log.info("Market is open.")
 
     # ── Flatten all existing positions ────────────────────────────────────────
-    portfolio = client.get_portfolio()
-    any_flat = False
-    for ticker, sec in portfolio.items():
-        pos = int(sec["position"])
-        if pos > 0:
-            log.info(f"Flattening existing LONG  {pos:>6d} {ticker}")
-            place_market(client, ticker, OrderAction.SELL, pos)
-            any_flat = True
-        elif pos < 0:
-            log.info(f"Flattening existing SHORT {abs(pos):>6d} {ticker}")
-            place_market(client, ticker, OrderAction.BUY, abs(pos))
-            any_flat = True
-    if not any_flat:
-        log.info("No existing positions to flatten.")
+    log.info("Flattening all existing positions...")
+    _flatten_all(client)
 
     # ── Step 3: refit params from live history + calibrate thresholds ─────────
     log.info("Fetching live history to refit spread parameters and calibrate thresholds...")
@@ -250,12 +257,7 @@ def run():
                 log.warning(f"RISK LIMIT HIT — drawdown {total_pnl - risk_baseline:+,.0f} "
                             f"< -{RISK_LIMIT:,.0f}. Flattening all positions and pausing {RISK_PAUSE_TICKS} ticks.")
                 session_pnl += _realize_pnl(price1, price2)
-                for ticker, sec in portfolio.items():
-                    pos = int(sec["position"])
-                    if pos > 0:
-                        place_market(client, ticker, OrderAction.SELL, pos)
-                    elif pos < 0:
-                        place_market(client, ticker, OrderAction.BUY, abs(pos))
+                _flatten_all(client)   # fresh portfolio fetch, rounds positions correctly
                 tot_sec2 = 0; tot_sec1 = 0; in_position = False
                 risk_baseline = total_pnl   # reset — next limit measured from here
                 paused_until  = tick_count + RISK_PAUSE_TICKS
