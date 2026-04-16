@@ -40,7 +40,7 @@ TRADE_FRACTION = 0.25
 
 LOOKBACK          = 40   # ticks used when refitting model
 RISK_LIMIT        = 300  # flatten + pause if P&L drops RISK_LIMIT below baseline
-RISK_PAUSE_TICKS  = 30   # ticks to sit out after hitting the risk limit
+RISK_PAUSE_TICKS  = 5   # ticks to sit out after hitting the risk limit
 
 LOOP_INTERVAL = settings.get("loop_interval", 1)
 # ─────────────────────────────────────────────────────────────────────────────
