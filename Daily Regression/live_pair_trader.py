@@ -136,27 +136,42 @@ def run():
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
                      f"spread={spread:+.4f}  (entry≥{entry_thresh:.4f}  exit≤{exit_thresh:.4f})")
 
-            if spread >= entry_thresh and not in_position:
+            if not in_position:
                 notional = CAPITAL * TRADE_FRACTION
                 qty2     = int(notional // price2)
                 qty1     = int(notional // price1)
 
-                log.info(f"ENTRY — short {security2} ({qty2}), long {security1} ({qty1})")
-                place_market(client, security2, OrderAction.SELL, qty2)
-                place_market(client, security1, OrderAction.BUY,  qty1)
+                if spread >= entry_thresh:
+                    # Spread too high — short security2, long security1
+                    log.info(f"ENTRY SHORT — sell {security2} ({qty2}), buy {security1} ({qty1})")
+                    place_market(client, security2, OrderAction.SELL, qty2)
+                    place_market(client, security1, OrderAction.BUY,  qty1)
+                    tot_sec2    = -qty2
+                    tot_sec1    =  qty1
+                    in_position = True
 
-                tot_sec2    = -qty2
-                tot_sec1    =  qty1
-                in_position = True
+                elif spread <= -entry_thresh:
+                    # Spread too low — long security2, short security1
+                    log.info(f"ENTRY LONG  — buy {security2} ({qty2}), sell {security1} ({qty1})")
+                    place_market(client, security2, OrderAction.BUY,  qty2)
+                    place_market(client, security1, OrderAction.SELL, qty1)
+                    tot_sec2    =  qty2
+                    tot_sec1    = -qty1
+                    in_position = True
 
-            elif spread <= exit_thresh and in_position:
-                log.info("EXIT — closing position")
-                place_market(client, security2, OrderAction.BUY,  abs(tot_sec2))
-                place_market(client, security1, OrderAction.SELL, abs(tot_sec1))
+            elif in_position:
+                # Exit when spread reverts back toward zero past exit threshold
+                if tot_sec2 < 0 and spread <= exit_thresh:
+                    log.info("EXIT SHORT — closing position")
+                    place_market(client, security2, OrderAction.BUY,  abs(tot_sec2))
+                    place_market(client, security1, OrderAction.SELL, abs(tot_sec1))
+                    tot_sec2 = 0; tot_sec1 = 0; in_position = False
 
-                tot_sec2    = 0
-                tot_sec1    = 0
-                in_position = False
+                elif tot_sec2 > 0 and spread >= -exit_thresh:
+                    log.info("EXIT LONG  — closing position")
+                    place_market(client, security2, OrderAction.SELL, abs(tot_sec2))
+                    place_market(client, security1, OrderAction.BUY,  abs(tot_sec1))
+                    tot_sec2 = 0; tot_sec1 = 0; in_position = False
 
         except Exception as e:
             log.error(f"Tick error: {e}")
