@@ -35,11 +35,11 @@ from sklearn.linear_model import LinearRegression
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
-CAPITAL        = 40_000_000
-TRADE_FRACTION = 0.5
+CAPITAL        = 1_000_000
+TRADE_FRACTION = 0.25
 
 LOOKBACK          = 40   # ticks used when refitting model
-RISK_LIMIT        = 3000  # flatten + pause if P&L drops RISK_LIMIT below baseline
+RISK_LIMIT        = 300  # flatten + pause if P&L drops RISK_LIMIT below baseline
 RISK_PAUSE_TICKS  = 5   # ticks to sit out after hitting the risk limit
 
 LOOP_INTERVAL = settings.get("loop_interval", 1)
@@ -115,25 +115,6 @@ def place_market(client, ticker, action, quantity):
         log.error(f"  ORDER FAILED  {action.value} {quantity} {ticker}: {e}")
 
 
-def _flatten_all(client):
-    """Fetch current portfolio and close every non-zero position."""
-    portfolio = client.get_portfolio()
-    closed_any = False
-    for ticker, sec in portfolio.items():
-        pos = round(float(sec.get("position", 0)))
-        if pos > 0:
-            log.info(f"  FLATTEN LONG  {pos:>6d} {ticker}")
-            place_market(client, ticker, OrderAction.SELL, pos)
-            closed_any = True
-        elif pos < 0:
-            log.info(f"  FLATTEN SHORT {abs(pos):>6d} {ticker}")
-            place_market(client, ticker, OrderAction.BUY, abs(pos))
-            closed_any = True
-    if not closed_any:
-        log.info("  Nothing to flatten.")
-    return closed_any
-
-
 def run():
     # ── Step 1: pick pair from daily regression ───────────────────────────────
     log.info(f"Running daily pair regression — picking rank #{PAIR_RANK}...")
@@ -160,18 +141,29 @@ def run():
     log.info("Waiting for market to open...")
     while True:
         try:
-            status = client.get_case()["status"]
-            if status == "ACTIVE":
+            if client.is_market_open():
                 break
-            log.info(f"Market status: {status} — waiting...")
+            log.info("Market not open yet, retrying...")
         except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout):
             log.warning("Connection error, retrying...")
         time.sleep(1)
     log.info("Market is open.")
 
     # ── Flatten all existing positions ────────────────────────────────────────
-    log.info("Flattening all existing positions...")
-    _flatten_all(client)
+    portfolio = client.get_portfolio()
+    any_flat = False
+    for ticker, sec in portfolio.items():
+        pos = int(sec["position"])
+        if pos > 0:
+            log.info(f"Flattening existing LONG  {pos:>6d} {ticker}")
+            place_market(client, ticker, OrderAction.SELL, pos)
+            any_flat = True
+        elif pos < 0:
+            log.info(f"Flattening existing SHORT {abs(pos):>6d} {ticker}")
+            place_market(client, ticker, OrderAction.BUY, abs(pos))
+            any_flat = True
+    if not any_flat:
+        log.info("No existing positions to flatten.")
 
     # ── Step 3: refit params from live history + calibrate thresholds ─────────
     log.info("Fetching live history to refit spread parameters and calibrate thresholds...")
@@ -200,7 +192,7 @@ def run():
     price1_buf   = list(hist1)
     price2_buf   = list(hist2)
     tick_count   = 0
-    peak_pnl       = 0.0   # high-water mark — risk limit trails this upward
+    risk_baseline  = 0.0   # P&L level the drawdown limit is measured from
     paused_until   = 0     # tick number at which trading resumes after a risk pause
 
     log.info(f"Starting loop — {security2}/{security1}  "
@@ -217,12 +209,8 @@ def run():
 
     while True:
         try:
-            status = client.get_case()["status"]
-            if status == "STOPPED":
+            if not client.is_market_open():
                 break
-            if status == "PAUSED":
-                time.sleep(LOOP_INTERVAL)
-                continue
         except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout):
             log.warning("Connection error checking market status, continuing...")
             time.sleep(LOOP_INTERVAL)
@@ -251,8 +239,6 @@ def run():
             # ── Total P&L (realized + unrealized) ─────────────────────────────
             unrealized = _realize_pnl(price1, price2)
             total_pnl  = session_pnl + unrealized
-            if total_pnl > peak_pnl:
-                peak_pnl = total_pnl   # high-water mark moves up with profits
 
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
                      f"spread={spread:+.4f}  "
@@ -260,14 +246,19 @@ def run():
                      f"PnL={total_pnl:+,.0f}  Sharpe={sharpe:+.4f}")
 
             # ── Risk check (only when in a position) ──────────────────────────
-            if in_position and (total_pnl - peak_pnl) < -RISK_LIMIT:
-                log.warning(f"RISK LIMIT HIT — drawdown from peak {total_pnl - peak_pnl:+,.0f} "
+            if in_position and (total_pnl - risk_baseline) < -RISK_LIMIT:
+                log.warning(f"RISK LIMIT HIT — drawdown {total_pnl - risk_baseline:+,.0f} "
                             f"< -{RISK_LIMIT:,.0f}. Flattening all positions and pausing {RISK_PAUSE_TICKS} ticks.")
                 session_pnl += _realize_pnl(price1, price2)
-                _flatten_all(client)   # fresh portfolio fetch, rounds positions correctly
+                for ticker, sec in portfolio.items():
+                    pos = int(sec["position"])
+                    if pos > 0:
+                        place_market(client, ticker, OrderAction.SELL, pos)
+                    elif pos < 0:
+                        place_market(client, ticker, OrderAction.BUY, abs(pos))
                 tot_sec2 = 0; tot_sec1 = 0; in_position = False
-                peak_pnl     = total_pnl   # reset peak after trigger so next limit is from here
-                paused_until = tick_count + RISK_PAUSE_TICKS
+                risk_baseline = total_pnl   # reset — next limit measured from here
+                paused_until  = tick_count + RISK_PAUSE_TICKS
 
             # ── Pause check ───────────────────────────────────────────────────
             if tick_count <= paused_until:
@@ -290,16 +281,9 @@ def run():
                          f"entry=±{entry_thresh:.4f}  exit=±{exit_thresh:.4f}")
 
             # ── Trading logic ─────────────────────────────────────────────────
-            notional     = CAPITAL * TRADE_FRACTION
-            qty2_target  = int(notional // price2)
-            qty1_target  = int(notional // price1)
-            max2         = int(portfolio[security2].get("max_trade_size", qty2_target))
-            max1         = int(portfolio[security1].get("max_trade_size", qty1_target))
-            qty2         = min(qty2_target, max2)
-            qty1         = min(qty1_target, max1)
-            if qty2 < qty2_target or qty1 < qty1_target:
-                log.info(f"  QTY CAPPED by max_trade_size: "
-                         f"{security2} {qty2_target}→{qty2}  {security1} {qty1_target}→{qty1}")
+            notional = CAPITAL * TRADE_FRACTION
+            qty2     = int(notional // price2)
+            qty1     = int(notional // price1)
 
             if not in_position:
                 if spread >= entry_thresh:
