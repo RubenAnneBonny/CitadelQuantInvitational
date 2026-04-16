@@ -38,6 +38,9 @@ PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
 CAPITAL        = 1_000_000
 TRADE_FRACTION = 0.25
 
+LOOKBACK     = 40       # (Y) ticks used for each parameter fit
+REFIT_EVERY  = 10       # (X) refit every N ticks when flat
+
 LOOP_INTERVAL = settings.get("loop_interval", 1)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -161,29 +164,35 @@ def run():
     if not any_flat:
         log.info("No existing positions to flatten.")
 
-    # ── Step 3: refit params from live history + calibrate thresholds ─────────
-    log.info("Fetching live history to refit spread parameters and calibrate thresholds...")
-    hist1 = np.array([e["close"] for e in client.get_history(security1)])[-40:]
-    hist2 = np.array([e["close"] for e in client.get_history(security2)])[-40:]
+    # ── Step 3: initial fit from live history ────────────────────────────────
+    log.info(f"Fetching live history (last {LOOKBACK} ticks) to fit parameters...")
+    hist1 = np.array([e["close"] for e in client.get_history(security1)])[-LOOKBACK:]
+    hist2 = np.array([e["close"] for e in client.get_history(security2)])[-LOOKBACK:]
 
-    model     = LinearRegression(fit_intercept=True).fit(hist1.reshape(-1, 1), hist2)
-    coef      = float(model.coef_[0])
-    intercept = float(model.intercept_)
-    residuals = hist2 - (coef * hist1 + intercept)
-    sd        = float(residuals.std())
+    def _refit(h1, h2):
+        mdl       = LinearRegression(fit_intercept=True).fit(h1.reshape(-1, 1), h2)
+        c         = float(mdl.coef_[0])
+        i         = float(mdl.intercept_)
+        res       = h2 - (c * h1 + i)
+        s         = float(res.std())
+        et, xt    = _calibrate_thresholds(res, s)
+        log.info(f"  FIT  {security2} = {c:.4f}·{security1} + {i:.4f}  SD={s:.4f}  "
+                 f"entry=±{et:.4f}  exit=±{xt:.4f}")
+        return c, i, et, xt
 
-    log.info(f"Live fit:  {security2} = {coef:.4f}·{security1} + {intercept:.4f}  SD={sd:.4f}")
-
-    entry_thresh, exit_thresh = _calibrate_thresholds(residuals, sd)
-    log.info(f"Entry at spread ≥ ±{entry_thresh:.4f}  |  Exit at ≤ ±{exit_thresh:.4f}")
+    coef, intercept, entry_thresh, exit_thresh = _refit(hist1, hist2)
 
     # ── Step 4: trade ─────────────────────────────────────────────────────────
     in_position = False
     tot_sec2    = 0
     tot_sec1    = 0
+    price1_buf  = list(hist1)
+    price2_buf  = list(hist2)
+    tick_count  = 0
 
     log.info(f"Starting loop — {security2}/{security1}  "
-             f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}")
+             f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}  "
+             f"refit every {REFIT_EVERY} ticks (lookback {LOOKBACK})")
 
     while True:
         try:
@@ -195,10 +204,21 @@ def run():
             continue
 
         try:
-            portfolio = client.get_portfolio()
-            price1    = portfolio[security1]["last"]
-            price2    = portfolio[security2]["last"]
-            spread    = price2 - (coef * price1 + intercept)
+            portfolio  = client.get_portfolio()
+            price1     = portfolio[security1]["last"]
+            price2     = portfolio[security2]["last"]
+            tick_count += 1
+
+            price1_buf.append(price1)
+            price2_buf.append(price2)
+
+            # ── Refit when flat every REFIT_EVERY ticks ───────────────────────
+            if not in_position and tick_count % REFIT_EVERY == 0:
+                h1 = np.array(price1_buf[-LOOKBACK:])
+                h2 = np.array(price2_buf[-LOOKBACK:])
+                coef, intercept, entry_thresh, exit_thresh = _refit(h1, h2)
+
+            spread = price2 - (coef * price1 + intercept)
 
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
                      f"spread={spread:+.4f}  (entry≥{entry_thresh:.4f}  exit≤{exit_thresh:.4f})")
