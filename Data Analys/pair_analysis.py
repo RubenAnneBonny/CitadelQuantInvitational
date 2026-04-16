@@ -441,4 +441,4 @@ if __name__ == "__main__":
     stocks = ["AAA", "BBB", "CCC", "DDD", "ETF", "IND"]
     # summary = run_pairs(df, stocks, train_days=30, plot_each=True)
 
-    fit_linear(df["BBB"], df["DDD"])
+    fit_linear(df["CCC"], df["ETF"])
