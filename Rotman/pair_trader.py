@@ -16,6 +16,7 @@ Usage
 
 import time
 import logging
+import requests
 
 from RotmanInteractiveTraderApi import RotmanInteractiveTraderApi, OrderType, OrderAction
 from settings import settings
@@ -76,7 +77,15 @@ def run() -> None:
 
     # ── Wait for market to open ───────────────────────────────────────────────
     log.info("Waiting for market to open...")
-    while not client.is_market_open():
+    while True:
+        try:
+            if client.is_market_open():
+                break
+            log.info("Market not open yet, retrying...")
+        except requests.exceptions.ConnectionError:
+            log.warning("Connection error while checking market status, retrying...")
+        except requests.exceptions.ConnectTimeout:
+            log.warning("Connection timed out while checking market status, retrying...")
         time.sleep(1)
     log.info("Market is open.")
 
@@ -96,7 +105,14 @@ def run() -> None:
     log.info("Starting trading loop...")
     prev_spread = None
 
-    while client.is_market_open():
+    while True:
+        try:
+            if not client.is_market_open():
+                break
+        except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout):
+            log.warning("Connection error checking market status, continuing...")
+            time.sleep(LOOP_INTERVAL)
+            continue
         try:
             price1, price2 = get_current_prices(client)
             spread = compute_spread(price1, price2, INTERCEPT, COEF)
