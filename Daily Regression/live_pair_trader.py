@@ -124,31 +124,33 @@ def _flatten_all(client):
     except Exception as e:
         log.error(f"  cancel_all_orders failed: {e}")
 
-    portfolio = client.get_portfolio()
-    closed_any = False
-    for ticker, sec in portfolio.items():
-        if not sec.get("is_tradeable", False):
-            continue
-        pos = round(float(sec.get("position", 0)))
-        log.info(f"  {ticker:>6s}  position={pos:>8d}")
-        if pos == 0:
-            log.info(f"    → nothing to do")
-            continue
+    # Re-fetch real position each round and keep sending until everything is actually zero
+    for attempt in range(15):
+        portfolio  = client.get_portfolio()
+        still_open = False
 
-        action    = OrderAction.SELL if pos > 0 else OrderAction.BUY
-        max_chunk = int(sec.get("max_trade_size", abs(pos))) or abs(pos)
-        remaining = abs(pos)
-        log.info(f"    → {action.value} {remaining:>8d} {ticker}  (max_trade_size={max_chunk})")
+        for ticker, sec in portfolio.items():
+            if not sec.get("is_tradeable", False):
+                continue
+            pos = round(float(sec.get("position", 0)))
+            if pos == 0:
+                continue
 
-        while remaining > 0:
-            chunk = min(remaining, max_chunk)
+            still_open = True
+            action     = OrderAction.SELL if pos > 0 else OrderAction.BUY
+            max_chunk  = int(sec.get("max_trade_size", abs(pos))) or abs(pos)
+            chunk      = min(abs(pos), max_chunk)
+            log.info(f"  [{attempt+1}] {ticker:>6s}  pos={pos:>8d}  → {action.value} {chunk}")
             place_market(client, ticker, action, chunk)
-            remaining -= chunk
 
-        closed_any = True
-    if not closed_any:
-        log.info("  Nothing to flatten.")
-    return closed_any
+        if not still_open:
+            log.info("  All positions flat.")
+            return True
+
+        time.sleep(0.3)   # wait for orders to fill before re-checking
+
+    log.warning("  Could not fully flatten after 15 attempts — residual positions may remain.")
+    return False
 
 
 def run():
