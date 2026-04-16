@@ -44,8 +44,8 @@ if __name__ == "__main__":
     intercept,coef=95.46931822547003,1.05311287
     sd=4.31792969543484
 
-    buy_in=0.825
-    back=0.575
+    buy_in=1.075
+    back=0.825
 
     security1="ETF"
     security2="BBB"
@@ -62,7 +62,7 @@ if __name__ == "__main__":
     last=time.time()
     
     while(case["status"]=="ACTIVE"):
-        if(time.time()-calmtime<1):
+        if(time.time()-calmtime<3):
             continue
 
         if(time.time()-last>5):
@@ -87,8 +87,8 @@ if __name__ == "__main__":
             total-=amount_Sec2*porto[security2]["ask"]
             total+=amount_Sec1*porto[security1]["bid"]
 
-            lowstoploss=porto[security2]["ask"]-0.5
-            highstoploss=porto[security1]["bid"]+0.5
+            lowstoploss=porto[security2]["ask"]-1.0#could add moving
+            highstoploss=porto[security1]["bid"]+1.0
 
             client.place_order(
                 security1, OrderType.MARKET, amount_Sec1, OrderAction.SELL
@@ -98,7 +98,6 @@ if __name__ == "__main__":
                 security2, OrderType.MARKET, amount_Sec2, OrderAction.BUY
             )
             print("Bought",tot_Sec1,tot_Sec2)
-
             bought=1
 
         #when diff high negative
@@ -112,8 +111,8 @@ if __name__ == "__main__":
             total+=amount_Sec2*porto[security2]["bid"]
             total-=amount_Sec1*porto[security1]["ask"]
 
-            lowstoploss=porto[security1]["ask"]-0.5
-            highstoploss=porto[security2]["bid"]+0.5
+            lowstoploss=porto[security1]["ask"]-1.0
+            highstoploss=porto[security2]["bid"]+1.0
 
             client.place_order(
                 security2, OrderType.MARKET, amount_Sec2, OrderAction.SELL
@@ -132,6 +131,9 @@ if __name__ == "__main__":
         #when going back
 
         elif bought and (porto[security2]["ask"]<lowstoploss or porto[security1]["bid"]>highstoploss):
+            total+=porto[security2]["position"]*porto[security2]["bid"]
+            total+=porto[security1]["position"]*porto[security1]["ask"]
+            
             tot_Sec1=porto[security1]["position"]
             tot_Sec2=porto[security2]["position"]
 
@@ -155,6 +157,8 @@ if __name__ == "__main__":
 
             lowstoploss=0
             highstoploss=9999999
+            tot_Sec1=0
+            tot_Sec2=0
             print("Stop loss",tot_Sec1,tot_Sec2)
             bought=0
 
@@ -162,7 +166,7 @@ if __name__ == "__main__":
 
         elif(diff<=mean+back*sd and tot_Sec1<0 and bought==1):
             total+=porto[security2]["position"]*porto[security2]["bid"]
-            total-=porto[security1]["position"]*porto[security1]["ask"]
+            total+=porto[security1]["position"]*porto[security1]["ask"]
             client.place_order(
                 security2, OrderType.MARKET, porto[security2]["position"], OrderAction.SELL
             )
@@ -170,8 +174,6 @@ if __name__ == "__main__":
             client.place_order(
                 security1, OrderType.MARKET, porto[security1]["position"], OrderAction.BUY
             )
-
-                            
 
             tot_Sec2=0
             tot_Sec1=0
