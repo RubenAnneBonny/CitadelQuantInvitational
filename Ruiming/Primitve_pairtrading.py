@@ -44,8 +44,8 @@ if __name__ == "__main__":
     intercept,coef=95.46931822547003,1.05311287
     sd=4.31792969543484
 
-    buy_in=0.15789473684210525
-    back=0
+    buy_in=0.825
+    back=0.575
 
     security1="ETF"
     security2="BBB"
@@ -84,6 +84,9 @@ if __name__ == "__main__":
             tot_Sec2+=amount_Sec2
             tot_Sec1-=amount_Sec1
 
+            total-=amount_Sec2*porto[security2]["ask"]
+            total+=amount_Sec1*porto[security1]["bid"]
+
             lowstoploss=porto[security2]["ask"]-0.5
             highstoploss=porto[security1]["bid"]+0.5
 
@@ -100,11 +103,14 @@ if __name__ == "__main__":
 
         #when diff high negative
         elif(diff<=mean-buy_in*sd and not bought):
-            amount_Sec1=total//2//porto[security2]["bid"]
-            amount_Sec2=total//2//porto[security1]["ask"]
+            amount_Sec2=total//2//porto[security2]["bid"]
+            amount_Sec1=total//2//porto[security1]["ask"]
 
-            tot_Sec2+=amount_Sec2
-            tot_Sec1-=amount_Sec1
+            tot_Sec2-=amount_Sec2
+            tot_Sec1+=amount_Sec1
+
+            total+=amount_Sec2*porto[security2]["bid"]
+            total-=amount_Sec1*porto[security1]["ask"]
 
             lowstoploss=porto[security1]["ask"]-0.5
             highstoploss=porto[security2]["bid"]+0.5
@@ -121,12 +127,11 @@ if __name__ == "__main__":
             bought=1
 
 
-
         #print(Sec1_MAX,Sec1_MIN,abs(diff),back*sd)
         
         #when going back
 
-        elif bought and porto[security2]["ask"]<lowstoploss or porto[security1]["bid"]>highstoploss:
+        elif bought and (porto[security2]["ask"]<lowstoploss or porto[security1]["bid"]>highstoploss):
             tot_Sec1=porto[security1]["position"]
             tot_Sec2=porto[security2]["position"]
 
@@ -151,31 +156,47 @@ if __name__ == "__main__":
             lowstoploss=0
             highstoploss=9999999
             print("Stop loss",tot_Sec1,tot_Sec2)
+            bought=0
 
             calmtime=time.time()
 
-            if tot_Sec1>0:
-                if((diff)<=back*sd):
-                    if(tot_Sec1>0):
-                        client.place_order(
-                            security2, OrderType.MARKET, abs(tot_Sec1), OrderAction.SELL
-                        )
-                    else:
-                        client.place_order(
-                            security2, OrderType.MARKET, abs(tot_Sec1), OrderAction.BUY
-                        )
+        elif(diff<=mean+back*sd and tot_Sec1<0 and bought==1):
+            total+=porto[security2]["position"]*porto[security2]["bid"]
+            total-=porto[security1]["position"]*porto[security1]["ask"]
+            client.place_order(
+                security2, OrderType.MARKET, porto[security2]["position"], OrderAction.SELL
+            )
 
-                    if(tot_Sec2>0):
-                        client.place_order(
-                            security1, OrderType.MARKET, abs(tot_Sec2), OrderAction.SELL
-                        )
-                    else:
-                        client.place_order(
-                            security1, OrderType.MARKET, abs(tot_Sec2), OrderAction.BUY
-                        )
-                    tot_Sec1=0
-                    tot_Sec2=0
+            client.place_order(
+                security1, OrderType.MARKET, porto[security1]["position"], OrderAction.BUY
+            )
 
-                    bought=False
+                            
 
-                    print("Sold out",tot_Sec1,tot_Sec2)
+            tot_Sec2=0
+            tot_Sec1=0
+            lowstoploss=0
+            highstoploss=9999999
+            print("Pulled out",tot_Sec1,tot_Sec2)
+            bought=0
+            #print(tot_ETF,i,total)
+
+        elif(diff>=mean-back*sd and tot_Sec1>0 and bought==1):
+            total+=porto[security1]["position"]*porto[security1]["bid"]
+            total-=porto[security2]["position"]*porto[security2]["ask"]
+
+            client.place_order(
+                security1, OrderType.MARKET, porto[security1]["position"], OrderAction.SELL
+            )
+
+            client.place_order(
+                security2, OrderType.MARKET, porto[security2]["position"], OrderAction.BUY
+            )
+
+            tot_Sec2=0
+            tot_Sec1=0
+            lowstoploss=0
+            highstoploss=9999999
+            print("Pulled out",tot_Sec1,tot_Sec2)
+            bought=0
+            #print(tot_ETF,i,total)
