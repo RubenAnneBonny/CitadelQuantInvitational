@@ -196,20 +196,20 @@ def run():
                 
                 if(tot_ETF>0):
                     client.place_order(
-                        security2, OrderType.MARKET, tot_ETF, OrderAction.SELL
+                        security1, OrderType.MARKET, abs(tot_ETF), OrderAction.SELL
                     )
                 else:
                     client.place_order(
-                        security2, OrderType.MARKET, -tot_ETF, OrderAction.BUY
+                        security1, OrderType.MARKET, abs(tot_ETF), OrderAction.BUY
                     )
 
                 if(tot_IND>0):
                     client.place_order(
-                        security1, OrderType.MARKET, tot_IND, OrderAction.SELL
+                        security2, OrderType.MARKET, abs(tot_IND), OrderAction.SELL
                     )
                 else:
                     client.place_order(
-                        security1, OrderType.MARKET, -tot_IND, OrderAction.BUY
+                        security2, OrderType.MARKET, abs(tot_IND), OrderAction.BUY
                     )
                 continue
 
