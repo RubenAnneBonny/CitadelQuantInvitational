@@ -147,8 +147,8 @@ def run():
 
     # ── Step 3: refit params from live history + calibrate thresholds ─────────
     log.info("Fetching live history to refit spread parameters and calibrate thresholds...")
-    hist1 = np.array([e["close"] for e in client.get_history(security1)])
-    hist2 = np.array([e["close"] for e in client.get_history(security2)])
+    hist1 = np.array([e["close"] for e in client.get_history(security1)])[-40:]
+    hist2 = np.array([e["close"] for e in client.get_history(security2)])[-40:]
 
     model     = LinearRegression(fit_intercept=True).fit(hist1.reshape(-1, 1), hist2)
     coef      = float(model.coef_[0])

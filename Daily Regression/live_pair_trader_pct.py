@@ -142,8 +142,8 @@ def run():
 
     # ── Step 3: refit ratio from live history + calibrate thresholds ──────────
     log.info("Fetching live history to refit ratio and calibrate thresholds...")
-    hist1 = np.array([e["close"] for e in client.get_history(security1)])
-    hist2 = np.array([e["close"] for e in client.get_history(security2)])
+    hist1 = np.array([e["close"] for e in client.get_history(security1)])[-40:]
+    hist2 = np.array([e["close"] for e in client.get_history(security2)])[-40:]
     ratio = float(np.mean(hist2 / hist1))
     sd    = float(np.std(hist2 / hist1 - ratio))
 
