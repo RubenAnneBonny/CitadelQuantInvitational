@@ -122,10 +122,8 @@ def run() -> None:
                 f"spread={spread:+.4f}  (threshold ±{entry_thresh:.4f})"
             )
 
-            if prev_spread is not None:
-
-                # ── Entry: spread crossed above entry threshold ────────────────
-                if spread >= entry_thresh and prev_spread < entry_thresh and not in_position:
+                # ── Entry: spread above entry threshold ───────────────────────
+                if spread >= entry_thresh and not in_position:
                     notional  = CAPITAL * TRADE_FRACTION
                     qty_sec2  = int(notional // price2)
                     qty_sec1  = int(notional // price1)
@@ -138,8 +136,8 @@ def run() -> None:
                     tot_sec1    =  qty_sec1
                     in_position = True
 
-                # ── Exit: spread fell back below exit threshold ────────────────
-                elif spread <= exit_thresh and prev_spread > exit_thresh and in_position:
+                # ── Exit: spread back below exit threshold ─────────────────────
+                elif spread <= exit_thresh and in_position:
                     log.info(f"EXIT — closing position")
                     place_market(client, SECURITY2, OrderAction.BUY,  abs(tot_sec2))
                     place_market(client, SECURITY1, OrderAction.SELL, abs(tot_sec1))
@@ -147,8 +145,6 @@ def run() -> None:
                     tot_sec2    = 0
                     tot_sec1    = 0
                     in_position = False
-
-            prev_spread = spread
 
         except Exception as e:
             log.error(f"Tick error: {e}")
