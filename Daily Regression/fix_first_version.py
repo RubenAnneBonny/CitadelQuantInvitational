@@ -111,6 +111,25 @@ def place_market(client, ticker, action, quantity):
         log.error(f"  ORDER FAILED  {action.value} {quantity} {ticker}: {e}")
 
 
+def _flatten_all(client):
+    """Fetch current portfolio and close every non-zero position."""
+    portfolio = client.get_portfolio()
+    closed_any = False
+    for ticker, sec in portfolio.items():
+        pos = round(float(sec.get("position", 0)))
+        if pos > 0:
+            log.info(f"  FLATTEN LONG  {pos:>6d} {ticker}")
+            place_market(client, ticker, OrderAction.SELL, pos)
+            closed_any = True
+        elif pos < 0:
+            log.info(f"  FLATTEN SHORT {abs(pos):>6d} {ticker}")
+            place_market(client, ticker, OrderAction.BUY, abs(pos))
+            closed_any = True
+    if not closed_any:
+        log.info("  Nothing to flatten.")
+    return closed_any
+
+
 def run():
     # ── Step 1: pick pair from daily regression ───────────────────────────────
     log.info(f"Running daily pair regression — picking rank #{PAIR_RANK}...")
@@ -137,13 +156,18 @@ def run():
     log.info("Waiting for market to open...")
     while True:
         try:
-            if client.is_market_open():
+            status = client.get_case()["status"]
+            if status == "ACTIVE":
                 break
-            log.info("Market not open yet, retrying...")
+            log.info(f"Market status: {status} — waiting...")
         except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout):
             log.warning("Connection error, retrying...")
         time.sleep(1)
     log.info("Market is open.")
+
+    # ── Flatten all existing positions ────────────────────────────────────────
+    log.info("Flattening all existing positions...")
+    _flatten_all(client)
 
     # ── Step 3: refit params from live history + calibrate thresholds ─────────
     log.info("Fetching live history to refit spread parameters and calibrate thresholds...")
@@ -171,48 +195,37 @@ def run():
 
     while True:
         try:
-            if not client.is_market_open():
+            status = client.get_case()["status"]
+            if status == "STOPPED":
                 break
+            if status == "PAUSED":
+                time.sleep(LOOP_INTERVAL)
+                continue
         except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout):
             log.warning("Connection error checking market status, continuing...")
             time.sleep(LOOP_INTERVAL)
             continue
 
         try:
+            curr      = client.get_case()
             portfolio = client.get_portfolio()
             price1    = portfolio[security1]["last"]
             price2    = portfolio[security2]["last"]
             spread    = price2 - (coef * price1 + intercept)
 
-            curr = client.get_case()
             bad = [391, 390, 389, 0, 1, 2]
 
-            log.info(curr["tick"])
-            log.info(security1, portfolio[security1]["position"])
-            log.info(security2, portfolio[security2]["position"])
+            log.info(f"tick={curr['tick']}  "
+                     f"{security1} pos={portfolio[security1]['position']}  "
+                     f"{security2} pos={portfolio[security2]['position']}")
 
             if curr["tick"] in bad:
-
-                tot_ETF = portfolio[security1]["position"]
-                tot_IND = portfolio[security2]["position"]
-                
-                if(tot_ETF>0):
-                    client.place_order(
-                        security1, OrderType.MARKET, abs(tot_ETF), OrderAction.SELL
-                    )
-                else:
-                    client.place_order(
-                        security1, OrderType.MARKET, abs(tot_ETF), OrderAction.BUY
-                    )
-
-                if(tot_IND>0):
-                    client.place_order(
-                        security2, OrderType.MARKET, abs(tot_IND), OrderAction.SELL
-                    )
-                else:
-                    client.place_order(
-                        security2, OrderType.MARKET, abs(tot_IND), OrderAction.BUY
-                    )
+                log.warning(f"BAD TICK {curr['tick']} — flattening all positions.")
+                _flatten_all(client)
+                # Reset all position-tracking state so the algo starts fresh
+                in_position = False
+                tot_sec2    = 0
+                tot_sec1    = 0
                 continue
 
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
