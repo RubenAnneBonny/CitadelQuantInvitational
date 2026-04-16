@@ -187,6 +187,8 @@ def run():
             curr = client.get_case()
             bad = [391, 390, 389, 0, 1, 2]
 
+            log.info(curr["tick"])
+
             if curr["tick"] in bad:
 
                 tot_ETF = portfolio[security1]["position"]
@@ -198,7 +200,7 @@ def run():
                     )
                 else:
                     client.place_order(
-                        security2, OrderType.MARKET, tot_ETF, OrderAction.BUY
+                        security2, OrderType.MARKET, -tot_ETF, OrderAction.BUY
                     )
 
                 if(tot_IND>0):
@@ -207,7 +209,7 @@ def run():
                     )
                 else:
                     client.place_order(
-                        security1, OrderType.MARKET, tot_IND, OrderAction.BUY
+                        security1, OrderType.MARKET, -tot_IND, OrderAction.BUY
                     )
                 continue
 
