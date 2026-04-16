@@ -52,125 +52,112 @@ if __name__ == "__main__":
     
     porto=dict(portfolio.items())
     y_fit=porto[security1]["last"]*coef+intercept
-    #print(y_fit-porto["ETF"]["last"])
+    #print(y_fit-porto["Sec1"]["last"])
 
-    ETF_MAX=256.70
-    ETF_MIN=256.70
+    tot_Sec2=0
+    tot_Sec1=0
+
+    highstoploss=999999999
+    lowstoploss=0
+    calmtime=time.time()
+    last=time.time()
     
     while(case["status"]=="ACTIVE"):
+        
+        if(time.time()-calmtime<1):
+            continue
+
+        if(time.time()-last>5):
+            last=time.time()
+            print("still working")
+
         portfolio = client.get_portfolio()
         porto=dict(portfolio.items())
 
         y_fit=porto[security1]["last"]*coef+intercept
-        diff=y_fit-porto[security2]["last"]
-
-        ETF_MAX=max(ETF_MAX,porto[security2]["last"])
-        ETF_MIN=min(ETF_MIN,porto[security2]["last"])
+        diff=porto[security2]["last"]-y_fit
 
         #print(diff,buy_in*sd,back*sd)
 
         #when diff high positiv
         if(diff>=buy_in*sd and not bought):
-            ETF_MAX=porto[security1]["last"]
-            ETF_MIN=porto[security1]["last"]
-            amount_etf=total//2//porto[security2]["bid"]
-            amount_ind=total//2//porto[security1]["ask"]
+            amount_Sec1=total//2//porto[security1]["bid"]
+            amount_Sec2=total//2//porto[security2]["ask"]
 
-            tot_IND+=amount_ind
-            tot_ETF-=amount_etf
+            tot_Sec2+=amount_Sec2
+            tot_Sec1-=amount_Sec1
+
+            lowstoploss=porto[security2]["ask"]-0.5
+            highstoploss=porto[security1]["bid"]+0.5
 
             client.place_order(
-                "ETF", OrderType.MARKET, amount_etf, OrderAction.SELL
+                security1, OrderType.MARKET, amount_Sec1, OrderAction.SELL
             )
 
             client.place_order(
-                "IND", OrderType.MARKET, amount_ind, OrderAction.BUY
+                security2, OrderType.MARKET, amount_Sec2, OrderAction.BUY
             )
+            print("Bought",tot_Sec1,tot_Sec2)
 
             bought=1
 
         #when diff high negative
-        """
-        if(-diff<=buy_in*sd and not bought):
-            ETF_MAX=porto[security2]["last"]
-            ETF_MIN=porto[security2]["last"]
-            amount_etf=total//2//porto[security2]["ask"]
-            amount_ind=total//2//porto[security1]["bid"]
 
-            tot_IND-=amount_ind
-            tot_ETF+=amount_etf
 
-            client.place_order(
-                "ETF", OrderType.MARKET, amount_etf, OrderAction.BUY
-            )
-
-            client.place_order(
-                "IND", OrderType.MARKET, amount_ind, OrderAction.SELL
-            )
-
-            bought=1"""
-
-        #print(ETF_MAX,ETF_MIN,abs(diff),back*sd)
+        #print(Sec1_MAX,Sec1_MIN,abs(diff),back*sd)
         
         #when going back
         if bought:
-            if tot_ETF>0:
-                if((abs(diff)<=back*sd or abs(1-porto[security2]["last"]/ETF_MAX)>0.05)):
-                    if(tot_ETF>0):
+            if porto[security2]["ask"]<lowstoploss or porto[security1]["bid"]>highstoploss:
+                tot_Sec1=porto[security1]["position"]
+                tot_Sec2=porto[security2]["position"]
+
+                if(tot_Sec1>0):
+                    client.place_order(
+                        security1, OrderType.MARKET, tot_Sec1, OrderAction.SELL
+                    )
+                else:
+                    client.place_order(
+                        security1, OrderType.MARKET, abs(tot_Sec1), OrderAction.BUY
+                    )
+
+                if(tot_Sec2>0):
+                    client.place_order(
+                        security2, OrderType.MARKET, tot_Sec2, OrderAction.SELL
+                    )
+                else:
+                    client.place_order(
+                        security2, OrderType.MARKET, abs(tot_Sec2), OrderAction.BUY
+                    )
+
+                lowstoploss=0
+                highstoploss=9999999
+                print("Stop loss",tot_Sec1,tot_Sec2)
+
+                calmtime=time.time()
+
+            if tot_Sec1>0:
+                if((diff)<=back*sd):
+                    if(tot_Sec1>0):
                         client.place_order(
-                            security2, OrderType.MARKET, tot_ETF, OrderAction.SELL
+                            security2, OrderType.MARKET, abs(tot_Sec1), OrderAction.SELL
                         )
                     else:
                         client.place_order(
-                            security2, OrderType.MARKET, tot_ETF, OrderAction.BUY
+                            security2, OrderType.MARKET, abs(tot_Sec1), OrderAction.BUY
                         )
 
-                    if(tot_IND>0):
+                    if(tot_Sec2>0):
                         client.place_order(
-                            security1, OrderType.MARKET, tot_IND, OrderAction.SELL
+                            security1, OrderType.MARKET, abs(tot_Sec2), OrderAction.SELL
                         )
                     else:
                         client.place_order(
-                            security1, OrderType.MARKET, tot_IND, OrderAction.BUY
+                            security1, OrderType.MARKET, abs(tot_Sec2), OrderAction.BUY
                         )
-                    tot_ETF=0
-                    tot_IND=0
+                    tot_Sec1=0
+                    tot_Sec2=0
 
                     bought=False
-                    """
-            else:
-                if((abs(diff)<=back*sd or abs(1-porto["ETF"]["last"]/ETF_MIN)>0.05)):
-                    if(tot_ETF>0):
-                        client.place_order(
-                            security2, OrderType.MARKET, tot_ETF, OrderAction.SELL
-                        )
-                    else:
-                        client.place_order(
-                            security2, OrderType.MARKET, tot_ETF, OrderAction.BUY
-                        )
 
-                    if(tot_IND>0):
-                        client.place_order(
-                            security1, OrderType.MARKET, tot_IND, OrderAction.SELL
-                        )
-                    else:
-                        client.place_order(
-                            security1, OrderType.MARKET, tot_IND, OrderAction.BUY
-                        )
-                    tot_ETF=0
-                    tot_IND=0
-
-                    bought=False
-    """
-    #Risk management as well
-    """
-    # place a test order for the first tradable security
-    first_tradeable_ticker = next(
-        (k for k, v in portfolio.items() if v["is_tradeable"])
-    )
-    order = client.place_order(
-        first_tradeable_ticker, OrderType.MARKET, 100, OrderAction.BUY
-    )
-    
-    logging.info(f"Placed order: {json.dumps(order, indent=2)}")
-"""
+                    print("Sold out",tot_Sec1,tot_Sec2)
