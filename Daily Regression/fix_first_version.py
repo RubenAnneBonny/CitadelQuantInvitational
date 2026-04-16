@@ -188,13 +188,27 @@ def run():
             bad = [391, 390, 389, 0, 1, 2]
 
             if curr["tick"] in bad:
+
+                tot_ETF = portfolio[security1]["position"]
+                tot_IND = portfolio[security2]["position"]
                 
-                client.place_order(
-                    security2, OrderType.MARKET, -portfolio[security1]["position"], OrderAction.SELL
-                )
-                client.place_order(
-                    security2, OrderType.MARKET, -portfolio[security2]["position"], OrderAction.SELL
-                )
+                if(tot_ETF>0):
+                    client.place_order(
+                        security2, OrderType.MARKET, tot_ETF, OrderAction.SELL
+                    )
+                else:
+                    client.place_order(
+                        security2, OrderType.MARKET, tot_ETF, OrderAction.BUY
+                    )
+
+                if(tot_IND>0):
+                    client.place_order(
+                        security1, OrderType.MARKET, tot_IND, OrderAction.SELL
+                    )
+                else:
+                    client.place_order(
+                        security1, OrderType.MARKET, tot_IND, OrderAction.BUY
+                    )
                 continue
 
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
