@@ -240,7 +240,7 @@ def run():
             price1_buf.append(price1)
             price2_buf.append(price2)
 
-            bad = [391, 390, 389, 0, 1, 2]
+            bad = [391, 390, 389, 388, 0, 1, 2, 3]
 
             log.info(f"tick={curr['tick']}  "
                      f"{security1} pos={portfolio[security1]['position']}  "
