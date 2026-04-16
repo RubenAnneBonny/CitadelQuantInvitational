@@ -8,7 +8,7 @@ from RotmanInteractiveTraderApi import (
 )
 from settings import settings
 
-logging.basicConfig(level=logging.INFO)
+#logging.basicConfig(level=logging.INFO)
 
 
 if __name__ == "__main__":
@@ -18,7 +18,7 @@ if __name__ == "__main__":
 
     # verify connection
     trader = client.get_trader()
-    logging.info(f"Connected as trader {json.dumps(trader, indent=2)}")
+    #logging.info(f"Connected as trader {json.dumps(trader, indent=2)}")
 
     # get portfolio and available securities
     portfolio = client.get_portfolio()
@@ -35,6 +35,97 @@ if __name__ == "__main__":
         time.sleep(1)
         case = client.get_case()
 
+
+    bought=False
+    security_prev=0
+    start_capital=1000000
+    total=start_capital
+    per=total/2
+    tot_ETF=0
+    tot_IND=0
+    intercept,coef=-15.801328357255073,2.37548408
+    sd=3.6381906636177406
+
+    buy_in=1.2222222222222223
+    back=0.5
+
+    security1="IND"
+    security2="ETF"
+    
+    porto=dict(portfolio.items())
+    y_fit=porto["IND"]["last"]*coef+intercept
+    #print(y_fit-porto["ETF"]["last"])
+
+    ETF_MAX=0
+    
+    while(case["status"]=="ACTIVE"):
+        porto=dict(portfolio.items())
+        y_fit=porto["IND"]["last"]*coef+intercept
+        diff=y_fit-porto["ETF"]["last"]
+
+        ETF_MAX=max(ETF_MAX,porto["ETF"]["last"])
+
+        #when diff high positiv
+        if(diff>=buy_in*sd and not bought):
+            amount_etf=per//porto[security2]["bid"]
+            amount_ind=per//porto[security1]["ask"]
+
+            tot_IND+=amount_ind
+            tot_ETF-=amount_etf
+
+            client.place_order(
+                "ETF", OrderType.MARKET, amount_etf, OrderAction.SELL
+            )
+
+            client.place_order(
+                "IND", OrderType.MARKET, amount_ind, OrderAction.BUY
+            )
+
+            bought=1
+        #when diff high negative
+        if(diff<=buy_in*sd and not bought):
+            amount_etf=per//porto[security2]["ask"]
+            amount_ind=per//porto[security1]["bid"]
+
+            tot_IND-=amount_ind
+            tot_ETF+=amount_etf
+
+            client.place_order(
+                "ETF", OrderType.MARKET, amount_etf, OrderAction.BUY
+            )
+
+            client.place_order(
+                "IND", OrderType.MARKET, amount_ind, OrderAction.SELL
+            )
+
+            bought=1
+
+        #when going back
+        if((abs(diff)<=back*sd or abs(1-porto["ETF"]["last"]/ETF_MAX)>0.05) and bought):
+            if(tot_ETF>0):
+                client.place_order(
+                    "ETF", OrderType.MARKET, tot_ETF, OrderAction.SELL
+                )
+            else:
+                client.place_order(
+                    "ETF", OrderType.MARKET, tot_ETF, OrderAction.BUY
+                )
+
+            if(tot_IND>0):
+                client.place_order(
+                    "IND", OrderType.MARKET, tot_IND, OrderAction.SELL
+                )
+            else:
+                client.place_order(
+                    "IND", OrderType.MARKET, tot_IND, OrderAction.BUY
+                )
+            tot_ETF=0
+            tot_IND=0
+
+            bought=False
+
+    #Risk management as well
+    """
     # place a test order for the first tradable security
     first_tradeable_ticker = next(
         (k for k, v in portfolio.items() if v["is_tradeable"])
@@ -44,38 +135,4 @@ if __name__ == "__main__":
     )
     
     logging.info(f"Placed order: {json.dumps(order, indent=2)}")
-
-start_capital=1000000
-total=start_capital
-per=total/2
-tot_ETF=0
-tot_IND=0
-sd=8.615719760068005
-
-buy_in=2.5555555555555554
-back=0.3111111111111111
-
-
-
-if(diff[i]>=buy_in*sd and diff[i-1]<buy_in*sd and start_capital>0):
-    amount_etf=per//test_data[security2][i]
-    amount_ind=per//test_data[security1][i]
-
-    tot_IND+=amount_ind
-    tot_ETF-=amount_etf
-
-    total+=amount_etf*test_data[security2][i]
-    total-=amount_ind*test_data[security1][i]
-
-    #print(tot_ETF,i,total)
-
-if(diff[i]<=back*sd and diff[i-1]>back*sd and tot_ETF<0):
-    total-=tot_ETF*test_data[security2][i]
-    total+=tot_IND*test_data[security1][i]
-    tot_ETF=0
-    tot_IND=0
-
-    #print(tot_ETF,i,total)
-
-
-profit.append(total/start_capital)
+"""
