@@ -35,7 +35,7 @@ from sklearn.linear_model import LinearRegression
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
-CAPITAL        = 1_000_000
+CAPITAL        = 10_000_000
 TRADE_FRACTION = 0.25
 
 LOOKBACK          = 40   # ticks used when refitting model
@@ -285,9 +285,16 @@ def run():
                          f"entry=±{entry_thresh:.4f}  exit=±{exit_thresh:.4f}")
 
             # ── Trading logic ─────────────────────────────────────────────────
-            notional = CAPITAL * TRADE_FRACTION
-            qty2     = int(notional // price2)
-            qty1     = int(notional // price1)
+            notional     = CAPITAL * TRADE_FRACTION
+            qty2_target  = int(notional // price2)
+            qty1_target  = int(notional // price1)
+            max2         = int(portfolio[security2].get("max_trade_size", qty2_target))
+            max1         = int(portfolio[security1].get("max_trade_size", qty1_target))
+            qty2         = min(qty2_target, max2)
+            qty1         = min(qty1_target, max1)
+            if qty2 < qty2_target or qty1 < qty1_target:
+                log.info(f"  QTY CAPPED by max_trade_size: "
+                         f"{security2} {qty2_target}→{qty2}  {security1} {qty1_target}→{qty1}")
 
             if not in_position:
                 if spread >= entry_thresh:
