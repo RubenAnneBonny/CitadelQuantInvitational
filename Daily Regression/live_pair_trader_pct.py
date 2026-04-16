@@ -1,18 +1,15 @@
 """
-Live Pair Trader
-=================
-Combines daily_pair_regression + threshold_optimizer and trades the result
-live on the Rotman server.
+Live Pair Trader — Percentage / Ratio Model
+============================================
+Same as live_pair_trader.py but uses the ratio spread:
 
-Steps
------
-1. Runs daily_pair_regression on the CSV data and picks the Nth best pair.
-2. Grid-searches (buy_in, back) thresholds to maximise Sharpe on that pair.
-3. Connects to the Rotman server and trades using the spread strategy.
+    spread = price2 / price1 − ratio
+
+instead of the absolute spread  price2 − (coef·price1 + intercept).
 
 Usage
 -----
-    python live_pair_trader.py
+    python live_pair_trader_pct.py
 """
 
 import os
@@ -28,10 +25,9 @@ _ROTMAN = os.path.join(_HERE, "../Rotman")
 sys.path.insert(0, _HERE)
 sys.path.insert(0, _ROTMAN)
 
-from daily_pair_regression import run as get_daily_pairs
+from daily_pair_regression_pct  import run as get_daily_pairs
 from RotmanInteractiveTraderApi import RotmanInteractiveTraderApi, OrderType, OrderAction
 from settings import settings
-from sklearn.linear_model import LinearRegression
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
@@ -56,7 +52,7 @@ def _calibrate_thresholds(spread_arr, sd, grid_steps=25):
     Returns (entry_thresh, exit_thresh).
     """
     if sd == 0:
-        return 0.5, 0.1
+        return 0.005, 0.001
 
     mults = np.linspace(0.1, 4.0, grid_steps)
     best_sharpe = -np.inf
@@ -96,8 +92,8 @@ def _calibrate_thresholds(spread_arr, sd, grid_steps=25):
                 best_entry  = entry
                 best_exit   = exit_
 
-    log.info(f"Live calibration: entry={best_entry:.4f}  exit={best_exit:.4f}  "
-             f"Sharpe={best_sharpe:.4f}  (trades={len(trades) if 'trades' in dir() else 0})")
+    log.info(f"Live calibration: entry={best_entry:.6f}  exit={best_exit:.6f}  "
+             f"Sharpe={best_sharpe:.4f}")
     return best_entry, best_exit
 
 
@@ -112,9 +108,9 @@ def place_market(client, ticker, action, quantity):
 
 
 def run():
-    # ── Step 1: pick pair from daily regression ───────────────────────────────
-    log.info(f"Running daily pair regression — picking rank #{PAIR_RANK}...")
-    _, _, _, pairs = get_daily_pairs()
+    # ── Step 1: pick pair from daily ratio regression ─────────────────────────
+    log.info(f"Running daily ratio regression — picking rank #{PAIR_RANK}...")
+    _, _, pairs = get_daily_pairs()
 
     if PAIR_RANK > len(pairs):
         raise ValueError(f"PAIR_RANK={PAIR_RANK} but only {len(pairs)} pairs available.")
@@ -122,11 +118,10 @@ def run():
     chosen    = pairs[PAIR_RANK - 1]
     security1 = chosen["s1"]
     security2 = chosen["s2"]
-    coef      = chosen["coef"]
-    intercept = chosen["intercept"]
+    ratio     = chosen["ratio"]
 
     log.info(f"Selected pair #{PAIR_RANK}: {security1}/{security2}  "
-             f"avg R²={chosen['r2']:.4f}  coef={coef:.4f}  intercept={intercept:.4f}")
+             f"avg R²={chosen['r2']:.4f}  ratio={ratio:.6f}")
 
     # ── Step 2: connect and wait for market to open ───────────────────────────
     client = RotmanInteractiveTraderApi(
@@ -145,29 +140,25 @@ def run():
         time.sleep(1)
     log.info("Market is open.")
 
-    # ── Step 3: refit params from live history + calibrate thresholds ─────────
-    log.info("Fetching live history to refit spread parameters and calibrate thresholds...")
+    # ── Step 3: refit ratio from live history + calibrate thresholds ──────────
+    log.info("Fetching live history to refit ratio and calibrate thresholds...")
     hist1 = np.array([e["close"] for e in client.get_history(security1)])[-40:]
     hist2 = np.array([e["close"] for e in client.get_history(security2)])[-40:]
+    ratio = float(np.mean(hist2 / hist1))
+    sd    = float(np.std(hist2 / hist1 - ratio))
 
-    model     = LinearRegression(fit_intercept=True).fit(hist1.reshape(-1, 1), hist2)
-    coef      = float(model.coef_[0])
-    intercept = float(model.intercept_)
-    residuals = hist2 - (coef * hist1 + intercept)
-    sd        = float(residuals.std())
+    log.info(f"Live fit:  {security2}/{security1} ratio={ratio:.6f}  SD={sd:.6f}")
 
-    log.info(f"Live fit:  {security2} = {coef:.4f}·{security1} + {intercept:.4f}  SD={sd:.4f}")
-
-    entry_thresh, exit_thresh = _calibrate_thresholds(residuals, sd)
-    log.info(f"Entry at spread ≥ ±{entry_thresh:.4f}  |  Exit at ≤ ±{exit_thresh:.4f}")
+    live_spread  = hist2 / hist1 - ratio
+    entry_thresh, exit_thresh = _calibrate_thresholds(live_spread, sd)
+    log.info(f"Entry at ratio spread ≥ ±{entry_thresh:.6f}  |  Exit at ≤ ±{exit_thresh:.6f}")
 
     # ── Step 4: trade ─────────────────────────────────────────────────────────
     in_position = False
     tot_sec2    = 0
     tot_sec1    = 0
 
-    log.info(f"Starting loop — {security2}/{security1}  "
-             f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}")
+    log.info(f"Starting loop — spread = {security2}/{security1} − {ratio:.6f}")
 
     while True:
         try:
@@ -182,10 +173,11 @@ def run():
             portfolio = client.get_portfolio()
             price1    = portfolio[security1]["last"]
             price2    = portfolio[security2]["last"]
-            spread    = price2 - (coef * price1 + intercept)
+            spread    = price2 / price1 - ratio
 
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
-                     f"spread={spread:+.4f}  (entry≥{entry_thresh:.4f}  exit≤{exit_thresh:.4f})")
+                     f"ratio={price2/price1:.6f}  spread={spread:+.6f}  "
+                     f"(entry≥±{entry_thresh:.6f}  exit≤±{exit_thresh:.6f})")
 
             if not in_position:
                 notional = CAPITAL * TRADE_FRACTION
@@ -193,7 +185,7 @@ def run():
                 qty1     = int(notional // price1)
 
                 if spread >= entry_thresh:
-                    # Spread too high — short security2, long security1
+                    # Ratio too high — security2 is expensive relative to security1
                     log.info(f"ENTRY SHORT — sell {security2} ({qty2}), buy {security1} ({qty1})")
                     place_market(client, security2, OrderAction.SELL, qty2)
                     place_market(client, security1, OrderAction.BUY,  qty1)
@@ -202,7 +194,7 @@ def run():
                     in_position = True
 
                 elif spread <= -entry_thresh:
-                    # Spread too low — long security2, short security1
+                    # Ratio too low — security2 is cheap relative to security1
                     log.info(f"ENTRY LONG  — buy {security2} ({qty2}), sell {security1} ({qty1})")
                     place_market(client, security2, OrderAction.BUY,  qty2)
                     place_market(client, security1, OrderAction.SELL, qty1)
@@ -211,7 +203,6 @@ def run():
                     in_position = True
 
             elif in_position:
-                # Exit when spread reverts back toward zero past exit threshold
                 if tot_sec2 < 0 and spread <= exit_thresh:
                     log.info("EXIT SHORT — closing position")
                     place_market(client, security2, OrderAction.BUY,  abs(tot_sec2))
