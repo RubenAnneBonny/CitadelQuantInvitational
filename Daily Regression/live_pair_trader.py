@@ -145,6 +145,22 @@ def run():
         time.sleep(1)
     log.info("Market is open.")
 
+    # ── Flatten all existing positions ────────────────────────────────────────
+    portfolio = client.get_portfolio()
+    any_flat  = False
+    for ticker, sec in portfolio.items():
+        pos = int(sec["position"])
+        if pos > 0:
+            log.info(f"Flattening existing LONG  {pos:>6d} {ticker}")
+            place_market(client, ticker, OrderAction.SELL, pos)
+            any_flat = True
+        elif pos < 0:
+            log.info(f"Flattening existing SHORT {abs(pos):>6d} {ticker}")
+            place_market(client, ticker, OrderAction.BUY, abs(pos))
+            any_flat = True
+    if not any_flat:
+        log.info("No existing positions to flatten.")
+
     # ── Step 3: refit params from live history + calibrate thresholds ─────────
     log.info("Fetching live history to refit spread parameters and calibrate thresholds...")
     hist1 = np.array([e["close"] for e in client.get_history(security1)])[-40:]
