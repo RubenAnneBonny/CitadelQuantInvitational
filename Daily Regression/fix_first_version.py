@@ -36,7 +36,7 @@ from sklearn.linear_model import LinearRegression
 # ── Config ────────────────────────────────────────────────────────────────────
 PAIR_RANK      = 1      # 1 = best pair by avg R², 2 = second best, etc.
 CAPITAL        = 20_000_000
-TRADE_FRACTION = 0.35
+TRADE_FRACTION = 0.45
 LOOKBACK       = 40     # ticks used when refitting model
 REFIT_EVERY    = 5     # refit model every N ticks when flat
 
