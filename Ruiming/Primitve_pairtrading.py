@@ -67,6 +67,7 @@ if __name__ == "__main__":
 
         if(time.time()-last>5):
             last=time.time()
+            print(total,tot_Sec1,tot_Sec2)
             print("still working")
 
         portfolio = client.get_portfolio()
