@@ -185,9 +185,16 @@ def run():
             spread    = price2 - (coef * price1 + intercept)
 
             curr = client.get_case()
-            bad = [391, 390, 0, 1]
+            bad = [391, 390, 389, 0, 1, 2]
 
             if curr["tick"] in bad:
+                
+                client.place_order(
+                    security2, OrderType.MARKET, -portfolio[security1]["position"], OrderAction.SELL
+                )
+                client.place_order(
+                    security2, OrderType.MARKET, -portfolio[security2]["position"], OrderAction.SELL
+                )
                 continue
 
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
