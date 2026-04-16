@@ -39,6 +39,7 @@ CAPITAL        = 40_000_000
 TRADE_FRACTION = 0.5
 
 LOOKBACK          = 40      # ticks used when refitting model
+REFIT_EVERY       = 10      # refit model every N ticks when flat
 RISK_LIMIT        = 100_000 # flatten + pause if P&L drops RISK_LIMIT below peak (drawdown limit)
 RISK_PAUSE_TICKS  = 5       # ticks to sit out after hitting the risk limit
 
@@ -296,8 +297,10 @@ def run():
                 time.sleep(LOOP_INTERVAL)
                 continue
 
-            # ── Refit on first tick after pause ends ──────────────────────────
-            if needs_refit and tick_count > paused_until and len(price1_buf) >= LOOKBACK:
+            # ── Refit: after risk pause OR every REFIT_EVERY ticks when flat ───
+            post_pause_refit = needs_refit and tick_count > paused_until
+            periodic_refit   = not in_position and tick_count % REFIT_EVERY == 0
+            if (post_pause_refit or periodic_refit) and len(price1_buf) >= LOOKBACK:
                 h1 = np.array(price1_buf[-LOOKBACK:])
                 h2 = np.array(price2_buf[-LOOKBACK:])
                 mdl       = LinearRegression(fit_intercept=True).fit(h1.reshape(-1, 1), h2)
@@ -306,9 +309,10 @@ def run():
                 res       = h2 - (coef * h1 + intercept)
                 sd        = float(res.std())
                 entry_thresh, exit_thresh = _calibrate_thresholds(res, sd)
-                spread = price2 - (coef * price1 + intercept)
+                spread    = price2 - (coef * price1 + intercept)
                 needs_refit = False
-                log.info(f"  POST-PAUSE REFIT  coef={coef:.4f}  intercept={intercept:.4f}  SD={sd:.4f}  "
+                reason    = "POST-PAUSE" if post_pause_refit else "PERIODIC"
+                log.info(f"  {reason} REFIT  coef={coef:.4f}  intercept={intercept:.4f}  SD={sd:.4f}  "
                          f"entry=±{entry_thresh:.4f}  exit=±{exit_thresh:.4f}")
 
             # ── Trading logic ─────────────────────────────────────────────────
