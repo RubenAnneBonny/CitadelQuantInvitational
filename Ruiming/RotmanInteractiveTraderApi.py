@@ -225,6 +225,7 @@ class RotmanInteractiveTraderApi:
         self.api_key = api_key
         self.api_host = api_host
         self.api_version = 'v1'
+        self.s = None
 
     def make_request(self, method: str, endpoint: str, params: Optional[dict[str, Any]] = None) -> Any:
         req = requests.Request(
@@ -237,7 +238,9 @@ class RotmanInteractiveTraderApi:
             params=params
         )
         p = req.prepare()
-        s = requests.Session()
+        if self.s is None:
+            self.s = requests.Session()
+        s = self.s
         logging.debug(f'{p.method} {p.url}')
         r = s.send(p).json()
         if not p.method == 'GET':
