@@ -39,12 +39,12 @@ if __name__ == "__main__":
 
     bought=False
     start_capital=1000000
-    mean=-1.0595512300584884
+    mean=-2.0595512300584884
     total=start_capital
-    intercept,coef=95.46931822547003,1.05311287
+    intercept,coef=95.46931822547003,2.05311287
     sd=4.31792969543484
 
-    buy_in=1.075
+    buy_in=2.075
     back=0.825
 
     security1="ETF"
@@ -68,7 +68,12 @@ if __name__ == "__main__":
         if(time.time()-last>5):
             last=time.time()
             print(total,tot_Sec1,tot_Sec2)
+            print(f"highstoploss {highstoploss},lowstoploss {lowstoploss}")
             print("still working")
+        
+        if bought:
+            lowstoploss=max(lowstoploss,porto[security2]["ask"]-2.0)
+            highstoploss=min(porto[security1]["bid"]+2.0,highstoploss)
 
         portfolio = client.get_portfolio()
         porto=dict(portfolio.items())
@@ -88,8 +93,8 @@ if __name__ == "__main__":
             total-=amount_Sec2*porto[security2]["ask"]
             total+=amount_Sec1*porto[security1]["bid"]
 
-            lowstoploss=porto[security2]["ask"]-1.0#could add moving
-            highstoploss=porto[security1]["bid"]+1.0
+            lowstoploss=porto[security2]["ask"]-2.0#could add moving
+            highstoploss=porto[security1]["bid"]+2.0
 
             client.place_order(
                 security1, OrderType.MARKET, amount_Sec1, OrderAction.SELL
@@ -112,8 +117,8 @@ if __name__ == "__main__":
             total+=amount_Sec2*porto[security2]["bid"]
             total-=amount_Sec1*porto[security1]["ask"]
 
-            lowstoploss=porto[security1]["ask"]-1.0
-            highstoploss=porto[security2]["bid"]+1.0
+            lowstoploss=porto[security1]["ask"]-2.0
+            highstoploss=porto[security2]["bid"]+2.0
 
             client.place_order(
                 security2, OrderType.MARKET, amount_Sec2, OrderAction.SELL
