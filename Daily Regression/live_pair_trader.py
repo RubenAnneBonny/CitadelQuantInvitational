@@ -165,6 +165,7 @@ def run():
     in_position = False
     tot_sec2    = 0
     tot_sec1    = 0
+    pnl_history = []   # mark-to-market value each tick
 
     log.info(f"Starting loop — {security2}/{security1}  "
              f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}")
@@ -184,8 +185,19 @@ def run():
             price2    = portfolio[security2]["last"]
             spread    = price2 - (coef * price1 + intercept)
 
+            mtm = tot_sec1 * price1 + tot_sec2 * price2
+            pnl_history.append(mtm)
+            if len(pnl_history) >= 2:
+                deltas = np.diff(pnl_history)
+                sigma  = deltas.std()
+                sharpe = deltas.mean() / sigma if sigma > 0 else 0.0
+            else:
+                sharpe = 0.0
+
             log.info(f"{security1}={price1:.4f}  {security2}={price2:.4f}  "
-                     f"spread={spread:+.4f}  (entry≥{entry_thresh:.4f}  exit≤{exit_thresh:.4f})")
+                     f"spread={spread:+.4f}  "
+                     f"(entry≥{entry_thresh:.4f}  exit≤{exit_thresh:.4f})  "
+                     f"Sharpe={sharpe:+.4f}")
 
             if not in_position:
                 notional = CAPITAL * TRADE_FRACTION
