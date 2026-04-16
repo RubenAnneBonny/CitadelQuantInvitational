@@ -255,8 +255,8 @@ def run():
                 tot_sec1    = 0
                 continue
 
-            # ── Periodic refit every REFIT_EVERY ticks when flat ──────────────
-            if not in_position and tick_count % REFIT_EVERY == 0 and len(price1_buf) >= LOOKBACK:
+            # ── Periodic refit every REFIT_EVERY ticks ────────────────────────
+            if tick_count % REFIT_EVERY == 0 and len(price1_buf) >= LOOKBACK:
                 h1 = np.array(price1_buf[-LOOKBACK:])
                 h2 = np.array(price2_buf[-LOOKBACK:])
                 mdl       = LinearRegression(fit_intercept=True).fit(h1.reshape(-1, 1), h2)
