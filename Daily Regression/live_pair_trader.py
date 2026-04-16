@@ -102,7 +102,7 @@ def _calibrate_thresholds(spread_arr, sd, grid_steps=25):
                 best_exit   = exit_
 
     log.info(f"Live calibration: entry={best_entry:.4f}  exit={best_exit:.4f}  "
-             f"Sharpe={best_sharpe:.4f}  (trades={len(trades) if 'trades' in dir() else 0})")
+             f"Sharpe={best_sharpe:.4f}")
     return best_entry, best_exit
 
 
@@ -246,8 +246,8 @@ def run():
                      f"(entry≥±{entry_thresh:.4f}  exit≤±{exit_thresh:.4f})  "
                      f"PnL={total_pnl:+,.0f}  Sharpe={sharpe:+.4f}")
 
-            # ── Risk check ────────────────────────────────────────────────────
-            if (total_pnl - risk_baseline) < -RISK_LIMIT and tick_count > paused_until:
+            # ── Risk check (only fires when in a position) ────────────────────
+            if in_position and (total_pnl - risk_baseline) < -RISK_LIMIT and tick_count > paused_until:
                 log.warning(f"RISK LIMIT HIT — P&L change {total_pnl - risk_baseline:+,.0f} "
                             f"< -{RISK_LIMIT:,.0f}. Flattening and pausing {RISK_PAUSE_TICKS} ticks.")
                 if in_position:
@@ -263,8 +263,9 @@ def run():
                 time.sleep(LOOP_INTERVAL)
                 continue
 
-            # ── Periodic refit ────────────────────────────────────────────────
-            if tick_count % REFIT_EVERY == 0 and len(price1_buf) >= LOOKBACK:
+            # ── Periodic refit (only when flat — refitting mid-position changes
+            #    the spread reference and causes spurious exits) ───────────────
+            if not in_position and tick_count % REFIT_EVERY == 0 and len(price1_buf) >= LOOKBACK:
                 h1  = np.array(price1_buf[-LOOKBACK:])
                 h2  = np.array(price2_buf[-LOOKBACK:])
                 mdl = LinearRegression(fit_intercept=True).fit(h1.reshape(-1, 1), h2)
