@@ -192,8 +192,9 @@ def run():
     pnl_history  = []      # MTM tick series for Sharpe
     price1_buf   = list(hist1)
     price2_buf   = list(hist2)
-    tick_count   = 0
-    paused_until = 0   # tick number at which trading resumes after a risk pause
+    tick_count      = 0
+    paused_until    = 0    # tick number at which trading resumes after a risk pause
+    risk_baseline   = 0.0  # total_pnl at the last risk reset — limit is measured from here
 
     log.info(f"Starting loop — {security2}/{security1}  "
              f"entry={entry_thresh:.4f}  exit={exit_thresh:.4f}  "
@@ -246,15 +247,16 @@ def run():
                      f"PnL={total_pnl:+,.0f}  Sharpe={sharpe:+.4f}")
 
             # ── Risk check ────────────────────────────────────────────────────
-            if total_pnl < -RISK_LIMIT and tick_count > paused_until:
-                log.warning(f"RISK LIMIT HIT — P&L {total_pnl:+,.0f} < -{RISK_LIMIT:,.0f}. "
-                            f"Flattening and pausing for {RISK_PAUSE_TICKS} ticks.")
+            if (total_pnl - risk_baseline) < -RISK_LIMIT and tick_count > paused_until:
+                log.warning(f"RISK LIMIT HIT — P&L change {total_pnl - risk_baseline:+,.0f} "
+                            f"< -{RISK_LIMIT:,.0f}. Flattening and pausing {RISK_PAUSE_TICKS} ticks.")
                 if in_position:
                     place_market(client, security2, OrderAction.BUY  if tot_sec2 < 0 else OrderAction.SELL, abs(tot_sec2))
                     place_market(client, security1, OrderAction.SELL if tot_sec1 > 0 else OrderAction.BUY,  abs(tot_sec1))
                     session_pnl += _realize_pnl(price1, price2)
                     tot_sec2 = 0; tot_sec1 = 0; in_position = False
-                paused_until = tick_count + RISK_PAUSE_TICKS
+                risk_baseline = total_pnl   # reset — next limit measured from here
+                paused_until  = tick_count + RISK_PAUSE_TICKS
 
             if tick_count <= paused_until:
                 log.info(f"  PAUSED — resuming in {paused_until - tick_count} ticks")
