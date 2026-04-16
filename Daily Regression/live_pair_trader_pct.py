@@ -34,9 +34,10 @@ PAIR_RANK      = 1          # 1 = best pair by avg R², 2 = second best, etc.
 CAPITAL        = 1_000_000
 TRADE_FRACTION = 0.25
 
-LOOKBACK       = 40         # ticks used to refit model and calibrate thresholds
-REFIT_EVERY    = 10         # refit every N ticks
-RISK_LIMIT     = 50_000     # stop trading if total P&L drops below −RISK_LIMIT
+LOOKBACK          = 40      # ticks used to refit model and calibrate thresholds
+REFIT_EVERY       = 10      # refit every N ticks
+RISK_LIMIT        = 300     # flatten and pause if total P&L drops below −RISK_LIMIT
+RISK_PAUSE_TICKS  = 30      # ticks to sit out after hitting the risk limit
 
 LOOP_INTERVAL = settings.get("loop_interval", 1)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -184,6 +185,7 @@ def run():
     price1_buf   = list(hist1)
     price2_buf   = list(hist2)
     tick_count   = 0
+    paused_until = 0   # tick number at which trading resumes after a risk pause
 
     log.info(f"Starting loop — spread = {security2}/{security1} − {ratio:.6f}  "
              f"risk_limit={RISK_LIMIT:,.0f}")
@@ -234,13 +236,20 @@ def run():
                      f"PnL={total_pnl:+,.0f}  Sharpe={sharpe:+.4f}")
 
             # ── Risk check ────────────────────────────────────────────────────
-            if total_pnl < -RISK_LIMIT:
+            if total_pnl < -RISK_LIMIT and tick_count > paused_until:
                 log.warning(f"RISK LIMIT HIT — P&L {total_pnl:+,.0f} < -{RISK_LIMIT:,.0f}. "
-                            f"Flattening all positions.")
+                            f"Flattening and pausing for {RISK_PAUSE_TICKS} ticks.")
                 if in_position:
                     place_market(client, security2, OrderAction.BUY  if tot_sec2 < 0 else OrderAction.SELL, abs(tot_sec2))
                     place_market(client, security1, OrderAction.SELL if tot_sec1 > 0 else OrderAction.BUY,  abs(tot_sec1))
-                break
+                    session_pnl += _realize_pnl(price1, price2)
+                    tot_sec2 = 0; tot_sec1 = 0; in_position = False
+                paused_until = tick_count + RISK_PAUSE_TICKS
+
+            if tick_count <= paused_until:
+                log.info(f"  PAUSED — resuming in {paused_until - tick_count} ticks")
+                time.sleep(LOOP_INTERVAL)
+                continue
 
             # ── Periodic refit ────────────────────────────────────────────────
             if tick_count % REFIT_EVERY == 0 and len(price1_buf) >= LOOKBACK:
