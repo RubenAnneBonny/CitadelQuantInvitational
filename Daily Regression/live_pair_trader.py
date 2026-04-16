@@ -248,10 +248,14 @@ def run():
             # ── Risk check (only when in a position) ──────────────────────────
             if in_position and (total_pnl - risk_baseline) < -RISK_LIMIT:
                 log.warning(f"RISK LIMIT HIT — drawdown {total_pnl - risk_baseline:+,.0f} "
-                            f"< -{RISK_LIMIT:,.0f}. Flattening and pausing {RISK_PAUSE_TICKS} ticks.")
-                place_market(client, security2, OrderAction.BUY  if tot_sec2 < 0 else OrderAction.SELL, abs(tot_sec2))
-                place_market(client, security1, OrderAction.SELL if tot_sec1 > 0 else OrderAction.BUY,  abs(tot_sec1))
+                            f"< -{RISK_LIMIT:,.0f}. Flattening all positions and pausing {RISK_PAUSE_TICKS} ticks.")
                 session_pnl += _realize_pnl(price1, price2)
+                for ticker, sec in portfolio.items():
+                    pos = int(sec["position"])
+                    if pos > 0:
+                        place_market(client, ticker, OrderAction.SELL, pos)
+                    elif pos < 0:
+                        place_market(client, ticker, OrderAction.BUY, abs(pos))
                 tot_sec2 = 0; tot_sec1 = 0; in_position = False
                 risk_baseline = total_pnl   # reset — next limit measured from here
                 paused_until  = tick_count + RISK_PAUSE_TICKS
