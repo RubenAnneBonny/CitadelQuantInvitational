@@ -1,12 +1,14 @@
 import json
 import time
 import logging
+import pandas as pd
 from RotmanInteractiveTraderApi import (
     RotmanInteractiveTraderApi,
     OrderType,
     OrderAction,
 )
 from settings import settings
+from sklearn.linear_model import LinearRegression
 
 #logging.basicConfig(level=logging.INFO)
 
@@ -36,10 +38,12 @@ if __name__ == "__main__":
         time.sleep(1)
         case = client.get_case()
 
+    data=[]
+    securities=["AAA","BBB","CCC","DDD","ETF","IND"]
 
     bought=False
     start_capital=1000000
-    mean=-2.0595512300584884
+    mean=0
     total=start_capital
     intercept,coef=95.46931822547003,2.05311287
     sd=4.31792969543484
@@ -62,11 +66,27 @@ if __name__ == "__main__":
     last=time.time()
     
     while(case["status"]=="ACTIVE"):
-        if(time.time()-calmtime<3):
-            continue
-
+        time.sleep(0.99)
         portfolio = client.get_portfolio()
         porto=dict(portfolio.items())
+
+        dict={}
+        for i in securities:
+            dict[i]=porto[i]["last"]
+        data.append(dict)
+
+        if(len(data)<15):
+            continue
+
+        data_df=pd.DataFrame(data)
+        limdf1=data_df[security1]
+        limdf2=data_df[security2]
+        linear_model = LinearRegression(fit_intercept=True)
+        linear_model.fit(limdf1.values.reshape(-1,1), limdf2.values)
+        intercept,coef=linear_model.intercept_,linear_model.coef_
+
+        if(time.time()-calmtime<3):
+            continue
 
         y_fit=porto[security1]["last"]*coef+intercept
         diff=porto[security2]["last"]-y_fit
